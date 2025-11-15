@@ -1,0 +1,33 @@
+{
+  "name": "what-if-simulation-engine",
+  "version": "1.0.0",
+  "description": "What-if simulation engine for microservice call graphs",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test test/*.test.js",
+    "verify": "node verify-schema.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://gitlab.com/team-alpha-zero/research-adaptive-micro-service-management/what-if-simulation-engine.git"
+  },
+  "keywords": [
+    "microservices",
+    "simulation",
+    "neo4j",
+    "observability"
+  ],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://gitlab.com/team-alpha-zero/research-adaptive-micro-service-management/what-if-simulation-engine/issues"
+  },
+  "homepage": "https://gitlab.com/team-alpha-zero/research-adaptive-micro-service-management/what-if-simulation-engine#readme",
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "express": "^4.22.1",
+    "neo4j-driver": "^6.0.1"
+  }
+}

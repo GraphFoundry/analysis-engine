@@ -1,4 +1,4 @@
-const { executeQuery } = require('./neo4j');
+const { executeQuery, toNumber } = require('./neo4j');
 const config = require('./config');
 
 /**
@@ -40,6 +40,7 @@ async function fetchUpstreamNeighborhood(targetServiceId, maxDepth) {
         RETURN service.serviceId AS serviceId,
             service.name AS name,
             service.namespace AS namespace
+        ORDER BY serviceId
     `;
     
     const nodeResult = await executeQuery(nodeQuery, { targetId: targetServiceId });
@@ -92,14 +93,19 @@ async function fetchUpstreamNeighborhood(targetServiceId, maxDepth) {
         const edge = {
             source: record.get('source'),
             target: record.get('target'),
-            rate: record.get('rate') || 0,
-            errorRate: record.get('errorRate') || 0,
-            p50: record.get('p50') || 0,
-            p95: record.get('p95') || 0,
-            p99: record.get('p99') || 0
+            rate: toNumber(record.get('rate')) ?? 0,
+            errorRate: toNumber(record.get('errorRate')) ?? 0,
+            p50: toNumber(record.get('p50')) ?? 0,
+            p95: toNumber(record.get('p95')) ?? 0,
+            p99: toNumber(record.get('p99')) ?? 0
         };
         
         edges.push(edge);
+        
+        // Safety guard: ensure maps exist for dirty data scenarios
+        if (!incomingEdges.has(edge.target)) incomingEdges.set(edge.target, []);
+        if (!outgoingEdges.has(edge.source)) outgoingEdges.set(edge.source, []);
+        
         incomingEdges.get(edge.target).push(edge);
         outgoingEdges.get(edge.source).push(edge);
     });
@@ -119,7 +125,7 @@ async function fetchUpstreamNeighborhood(targetServiceId, maxDepth) {
  * 
  * @param {GraphSnapshot} snapshot - Graph snapshot
  * @param {string} targetServiceId - Target service ID
- * @param {number} maxDepth - Maximum path length
+ * @param {number} maxDepth - Maximum hops (edges) in path
  * @param {number} maxPaths - Maximum paths to return
  * @returns {Array<{path: string[], pathRps: number}>}
  */
@@ -128,10 +134,14 @@ function findTopPathsToTarget(snapshot, targetServiceId, maxDepth, maxPaths = co
     const visited = new Set();
     
     // DFS to enumerate paths (limited by maxPaths hard cap)
+    // Uses hop-based depth: hops = currentPath.length - 1 (edges, not nodes)
     function dfs(currentId, currentPath, minRate) {
         if (paths.length >= maxPaths * 2) return; // Safety: early exit at 2x limit
         
-        if (currentId === targetServiceId && currentPath.length > 1) {
+        const hops = currentPath.length - 1; // hops = number of edges traversed
+        
+        // Found target with at least 1 hop
+        if (currentId === targetServiceId && hops >= 1) {
             paths.push({
                 path: [...currentPath],
                 pathRps: minRate
@@ -139,9 +149,14 @@ function findTopPathsToTarget(snapshot, targetServiceId, maxDepth, maxPaths = co
             return;
         }
         
-        if (currentPath.length >= maxDepth) return;
+        // Stop exploring if we've reached max hops
+        if (hops >= maxDepth) return;
         
-        const outgoing = snapshot.outgoingEdges.get(currentId) || [];
+        // Sort outgoing edges for determinism: by rate desc, then target name asc
+        const outgoing = (snapshot.outgoingEdges.get(currentId) || [])
+            .slice()
+            .sort((e1, e2) => (e2.rate - e1.rate) || e1.target.localeCompare(e2.target));
+        
         for (const edge of outgoing) {
             if (visited.has(edge.target)) continue; // Prevent cycles
             
@@ -156,8 +171,9 @@ function findTopPathsToTarget(snapshot, targetServiceId, maxDepth, maxPaths = co
         }
     }
     
-    // Start DFS from all nodes (except target)
-    for (const [nodeId, _] of snapshot.nodes) {
+    // Start DFS from all nodes (except target), sorted for determinism
+    const startNodeIds = Array.from(snapshot.nodes.keys()).sort();
+    for (const nodeId of startNodeIds) {
         if (nodeId === targetServiceId) continue;
         if (paths.length >= maxPaths * 2) break;
         
@@ -166,7 +182,7 @@ function findTopPathsToTarget(snapshot, targetServiceId, maxDepth, maxPaths = co
         dfs(nodeId, [nodeId], Infinity);
     }
     
-    // Sort by pathRps descending, take top N
+    // Sort by pathRps descending (already deterministic via sorted exploration)
     paths.sort((a, b) => b.pathRps - a.pathRps);
     return paths.slice(0, maxPaths);
 }

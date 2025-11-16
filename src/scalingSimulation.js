@@ -1,4 +1,4 @@
-const { fetchUpstreamNeighborhood } = require('./graph');
+const { fetchUpstreamNeighborhood, findTopPathsToTarget } = require('./graph');
 const config = require('./config');
 
 /**
@@ -83,24 +83,65 @@ function applyLinearScaling(baseLatency, currentPods, newPods) {
 }
 
 /**
+ * Compute minimum hop distance from source to target using BFS
+ * Returns null if no path exists
+ * 
+ * @param {GraphSnapshot} snapshot - Graph snapshot
+ * @param {string} sourceId - Source service ID
+ * @param {string} targetId - Target service ID
+ * @returns {number|null} - Hop distance or null
+ */
+function computeHopDistance(snapshot, sourceId, targetId) {
+    if (sourceId === targetId) return 0;
+    
+    const visited = new Set([sourceId]);
+    const queue = [{ id: sourceId, dist: 0 }];
+    
+    while (queue.length > 0) {
+        const { id, dist } = queue.shift();
+        const edges = snapshot.outgoingEdges.get(id) || [];
+        
+        for (const edge of edges) {
+            if (edge.target === targetId) {
+                return dist + 1;
+            }
+            if (!visited.has(edge.target)) {
+                visited.add(edge.target);
+                queue.push({ id: edge.target, dist: dist + 1 });
+            }
+        }
+    }
+    
+    return null; // No path found
+}
+
+/**
  * Compute weighted mean latency for a service's outgoing calls
  * Formula: SUM(rate * latency) / SUM(rate)
- * Returns null if total rate is 0 (no traffic)
+ * Returns null if total rate is 0 (no traffic) OR if any latency is missing
  * 
  * @param {EdgeData[]} edges - Outgoing edges
  * @param {string} metric - Latency metric (p50, p95, p99)
  * @param {Map<string, number>} [adjustedLatencies] - Optional adjusted latencies for specific targets
- * @returns {number|null} - Weighted mean latency in ms, or null if no traffic
+ * @returns {number|null} - Weighted mean latency in ms, or null if incomplete data
  */
 function computeWeightedMeanLatency(edges, metric, adjustedLatencies = new Map()) {
     let totalWeightedLatency = 0;
     let totalRate = 0;
     
     for (const edge of edges) {
-        const rate = edge.rate;
+        const rate = edge.rate ?? 0;
         const latency = adjustedLatencies.has(edge.target) 
             ? adjustedLatencies.get(edge.target)
             : edge[metric];
+        
+        // Skip zero-rate edges
+        if (rate <= 0) continue;
+        
+        // If any required latency is missing, can't compute honestly
+        if (latency === null || latency === undefined) {
+            return null;
+        }
         
         totalWeightedLatency += rate * latency;
         totalRate += rate;
@@ -135,11 +176,14 @@ async function simulateScaling(request) {
     const alpha = request.model?.alpha ?? config.simulation.scalingAlpha;
     
     // Validate inputs
-    if (maxDepth < 1 || maxDepth > 3) {
-        throw new Error(`maxDepth must be 1, 2, or 3. Got: ${maxDepth}`);
+    if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 3) {
+        throw new Error(`maxDepth must be integer 1, 2, or 3. Got: ${maxDepth}`);
     }
     if (!['p50', 'p95', 'p99'].includes(latencyMetric)) {
         throw new Error(`Invalid latencyMetric: ${latencyMetric}`);
+    }
+    if (!Number.isInteger(request.currentPods) || !Number.isInteger(request.newPods)) {
+        throw new Error('currentPods and newPods must be integers');
     }
     if (request.currentPods <= 0 || request.newPods <= 0) {
         throw new Error('currentPods and newPods must be positive');
@@ -157,79 +201,164 @@ async function simulateScaling(request) {
         throw new Error(`Service not found: ${request.serviceId}`);
     }
     
-    // Apply scaling formula to all incoming edges to target (in-memory adjustment)
+    // Apply scaling formula to target (compute ONCE using rate-weighted mean of incoming latencies)
     const adjustedLatencies = new Map();
     const incomingEdges = snapshot.incomingEdges.get(request.serviceId) || [];
     
-    for (const edge of incomingEdges) {
-        const currentLatency = edge[latencyMetric];
+    // Compute rate-weighted mean baseline latency from incoming edges
+    let baseLatency = null;
+    if (incomingEdges.length > 0) {
+        let totalWeighted = 0;
+        let totalRate = 0;
+        for (const edge of incomingEdges) {
+            const rate = edge.rate ?? 0;
+            const lat = edge[latencyMetric];
+            if (rate > 0 && lat !== null && lat !== undefined) {
+                totalWeighted += rate * lat;
+                totalRate += rate;
+            }
+        }
+        if (totalRate > 0) {
+            baseLatency = totalWeighted / totalRate;
+        }
+    }
+    
+    // Apply scaling model if we have baseline
+    if (baseLatency !== null) {
         let newLatency;
-        
         if (modelType === 'bounded_sqrt') {
             newLatency = applyBoundedSqrtScaling(
-                currentLatency,
+                baseLatency,
                 request.currentPods,
                 request.newPods,
                 alpha
             );
         } else if (modelType === 'linear') {
             newLatency = applyLinearScaling(
-                currentLatency,
+                baseLatency,
                 request.currentPods,
                 request.newPods
             );
         } else {
             throw new Error(`Unknown scaling model: ${modelType}`);
         }
-        
         adjustedLatencies.set(request.serviceId, newLatency);
     }
     
-    // Calculate impact on direct callers
+    // Compute impact on ALL upstream nodes (not just direct callers)
+    // This shows true propagation through the dependency graph
     const affectedCallers = [];
-    
-    for (const edge of incomingEdges) {
-        const callerId = edge.source;
-        const callerEdges = snapshot.outgoingEdges.get(callerId) || [];
+    for (const [nodeId, nodeData] of snapshot.nodes) {
+        // Skip the target itself
+        if (nodeId === request.serviceId) continue;
         
-        const beforeMs = computeWeightedMeanLatency(callerEdges, latencyMetric);
-        const afterMs = computeWeightedMeanLatency(callerEdges, latencyMetric, adjustedLatencies);
+        const nodeEdges = snapshot.outgoingEdges.get(nodeId) || [];
+        if (nodeEdges.length === 0) continue;
+        
+        const beforeMs = computeWeightedMeanLatency(nodeEdges, latencyMetric);
+        const afterMs = computeWeightedMeanLatency(nodeEdges, latencyMetric, adjustedLatencies);
+        
+        // Only include if there's actual impact (delta != 0) or measurable latency
+        const deltaMs = (beforeMs !== null && afterMs !== null) ? (afterMs - beforeMs) : null;
         
         affectedCallers.push({
-            serviceId: callerId,
+            serviceId: nodeId,
+            name: nodeData?.name ?? nodeId.split(':')[1],
+            namespace: nodeData?.namespace ?? nodeId.split(':')[0],
+            hopDistance: computeHopDistance(snapshot, nodeId, request.serviceId),
             beforeMs,
             afterMs,
-            deltaMs: (beforeMs !== null && afterMs !== null) ? (afterMs - beforeMs) : null
+            deltaMs
         });
     }
     
-    // Sort by absolute delta descending (biggest improvements first)
+    // Sort by absolute delta descending (biggest improvements first, nulls last)
     affectedCallers.sort((a, b) => {
         if (a.deltaMs === null) return 1;
         if (b.deltaMs === null) return -1;
         return Math.abs(b.deltaMs) - Math.abs(a.deltaMs);
     });
     
-    // Compute path latencies (simplified: sum of edge latencies along path)
-    // For demo, find paths to target and compute before/after
-    const affectedPaths = [];
+    // Compute real multi-hop paths using findTopPathsToTarget
+    const topPaths = findTopPathsToTarget(
+        snapshot,
+        request.serviceId,
+        maxDepth,
+        config.simulation.maxPathsReturned
+    );
     
-    // For each direct caller, create simple 2-hop paths
-    for (const edge of incomingEdges.slice(0, config.simulation.maxPathsReturned)) {
-        const path = [edge.source, request.serviceId];
-        const beforeMs = edge[latencyMetric];
-        const afterMs = adjustedLatencies.get(request.serviceId) || beforeMs;
+    // For each path, compute before/after latency (sum of edge latencies)
+    const affectedPaths = [];
+    for (const pathInfo of topPaths) {
+        const { path } = pathInfo;
+        let beforeMs = 0;
+        let afterMs = 0;
+        let hasIncompleteData = false;
+        
+        // Sum latencies along path edges
+        for (let i = 0; i < path.length - 1; i++) {
+            const source = path[i];
+            const target = path[i + 1];
+            const edges = snapshot.outgoingEdges.get(source) || [];
+            const edge = edges.find(e => e.target === target);
+            
+            if (!edge || edge[latencyMetric] === null || edge[latencyMetric] === undefined) {
+                hasIncompleteData = true;
+                break;
+            }
+            
+            const edgeLatency = edge[latencyMetric];
+            beforeMs += edgeLatency;
+            
+            // Use adjusted latency if this edge points to target
+            if (target === request.serviceId && adjustedLatencies.has(target)) {
+                afterMs += adjustedLatencies.get(target);
+            } else {
+                afterMs += edgeLatency;
+            }
+        }
         
         affectedPaths.push({
             path,
-            beforeMs,
-            afterMs,
-            deltaMs: afterMs - beforeMs
+            pathRps: pathInfo.pathRps,
+            beforeMs: hasIncompleteData ? null : beforeMs,
+            afterMs: hasIncompleteData ? null : afterMs,
+            deltaMs: hasIncompleteData ? null : (afterMs - beforeMs),
+            incompleteData: hasIncompleteData
         });
     }
     
-    // Sort by absolute delta descending
-    affectedPaths.sort((a, b) => Math.abs(b.deltaMs) - Math.abs(a.deltaMs));
+    // Sort by absolute delta descending (null deltas last)
+    affectedPaths.sort((a, b) => {
+        if (a.deltaMs === null) return 1;
+        if (b.deltaMs === null) return -1;
+        return Math.abs(b.deltaMs) - Math.abs(a.deltaMs);
+    });
+    
+    // Build path lookup: for each caller, find their best (highest pathRps) path to target
+    const callerBestPath = new Map();
+    for (const pathObj of affectedPaths) {
+        const startNode = pathObj.path[0];
+        if (!callerBestPath.has(startNode) || pathObj.pathRps > callerBestPath.get(startNode).pathRps) {
+            callerBestPath.set(startNode, pathObj);
+        }
+    }
+    
+    // Enrich affectedCallers with end-to-end latency from their best path
+    for (const caller of affectedCallers) {
+        const bestPath = callerBestPath.get(caller.serviceId);
+        if (bestPath && bestPath.deltaMs !== null) {
+            caller.endToEndBeforeMs = bestPath.beforeMs;
+            caller.endToEndAfterMs = bestPath.afterMs;
+            caller.endToEndDeltaMs = bestPath.deltaMs;
+            caller.viaPath = bestPath.path;
+        } else {
+            caller.endToEndBeforeMs = null;
+            caller.endToEndAfterMs = null;
+            caller.endToEndDeltaMs = null;
+            caller.viaPath = null;
+        }
+    }
     
     return {
         target: {
@@ -237,10 +366,30 @@ async function simulateScaling(request) {
             name: targetNode.name,
             namespace: targetNode.namespace
         },
+        neighborhood: {
+            description: 'k-hop upstream subgraph around target (not full graph)',
+            serviceCount: snapshot.nodes.size,
+            edgeCount: snapshot.edges.length,
+            depthUsed: maxDepth,
+            generatedAt: new Date().toISOString()
+        },
         latencyMetric,
+        scalingModel: { type: modelType, alpha },
         currentPods: request.currentPods,
         newPods: request.newPods,
-        affectedCallers: affectedCallers.slice(0, config.simulation.maxPathsReturned),
+        latencyEstimate: {
+            description: 'Rate-weighted mean of incoming edge latency to target',
+            baselineMs: baseLatency,
+            projectedMs: adjustedLatencies.get(request.serviceId) ?? null,
+            deltaMs: (baseLatency !== null && adjustedLatencies.has(request.serviceId)) 
+                ? (adjustedLatencies.get(request.serviceId) - baseLatency) 
+                : null,
+            unit: 'milliseconds'
+        },
+        affectedCallers: {
+            description: 'Edge-level impact: deltaMs is change in this caller\'s direct outgoing edge latency. endToEndDeltaMs is cumulative path latency change.',
+            items: affectedCallers.slice(0, config.simulation.maxPathsReturned)
+        },
         affectedPaths
     };
 }

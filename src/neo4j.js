@@ -2,6 +2,19 @@ const neo4j = require('neo4j-driver');
 const config = require('./config');
 
 /**
+ * Convert Neo4j Integer or other numeric types to native JS number
+ * Neo4j often returns integers as neo4j.Integer objects which break Math operations
+ * @param {*} value - Value to convert
+ * @returns {number|null} - Native JS number or null if not convertible
+ */
+function toNumber(value) {
+    if (value === null || value === undefined) return null;
+    if (neo4j.isInt(value)) return value.toNumber();
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+
+/**
  * @typedef {Object} EdgeData
  * @property {string} source - Source service ID
  * @property {string} target - Target service ID
@@ -112,5 +125,6 @@ module.exports = {
     executeQuery,
     checkHealth,
     closeDriver,
-    redactCredentials
+    redactCredentials,
+    toNumber
 };

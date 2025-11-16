@@ -59,6 +59,8 @@ The engine operates on the following Neo4j schema (managed by `service-graph-eng
 - Type: `CALLS_NOW` (direction: caller → callee)
 - Properties: `rate`, `errorRate`, `p50`, `p95`, `p99`, `windowStart`, `windowEnd`, `lastUpdated`
 
+> **Note on Rate Units:** The `rate` property represents call frequency. The actual unit depends on your metrics source configuration (typically requests per second from Prometheus rate functions). The engine treats rates as unit-agnostic; interpret results according to your source metrics.
+
 **ServiceId Format:** `"namespace:name"` (e.g., `"default:frontend"`)
 
 ## Configuration
@@ -77,7 +79,7 @@ All configuration is managed via environment variables with sensible defaults.
 | `MIN_LATENCY_FACTOR` | `0.6` | Minimum latency improvement factor |
 | `TIMEOUT_MS` | `8000` | Query and request timeout (ms) |
 | `MAX_PATHS_RETURNED` | `10` | Maximum paths in simulation results |
-| `PORT` | `3000` | HTTP server port |
+| `PORT` | `7000` | HTTP server port |
 
 **Setup:**
 
@@ -155,28 +157,39 @@ Or, using name/namespace:
     "name": "checkoutservice",
     "namespace": "default"
   },
-  "depth": 2,
+  "neighborhood": {
+    "description": "k-hop upstream subgraph around target (not full graph)",
+    "serviceCount": 3,
+    "edgeCount": 2,
+    "depthUsed": 2,
+    "generatedAt": "2025-12-25T08:22:28.950Z"
+  },
   "affectedCallers": [
     {
       "serviceId": "default:frontend",
+      "name": "frontend",
+      "namespace": "default",
       "lostTrafficRps": 0.178,
       "edgeErrorRate": 0.0
     }
   ],
-  "criticalPathsBroken": [
+  "criticalPathsToTarget": [
     {
       "path": ["default:loadgenerator", "default:frontend", "default:checkoutservice"],
       "pathRps": 0.178
     }
-  ]
+  ],
+  "totalLostTrafficRps": 0.178
 }
 ```
 
 **Response Fields:**
 
+- `neighborhood`: Metadata about the k-hop upstream subgraph used for analysis
 - `affectedCallers`: Direct callers that lose traffic, sorted by `lostTrafficRps` descending
-- `criticalPathsBroken`: Top N paths by traffic volume that include the failed service
+- `criticalPathsToTarget`: Top N paths by traffic volume that include the failed service
 - `pathRps`: Bottleneck throughput (min edge rate along path)
+- `totalLostTrafficRps`: Sum of lost traffic across all affected callers
 
 **Status Codes:**
 - `200 OK`: Simulation successful
@@ -188,7 +201,7 @@ Or, using name/namespace:
 **Example:**
 
 ```bash
-curl -X POST http://localhost:3000/simulate/failure \
+curl -X POST http://localhost:7000/simulate/failure \
   -H "Content-Type: application/json" \
   -d '{"serviceId": "default:checkoutservice"}'
 ```
@@ -225,13 +238,15 @@ Simulates changing the pod count for a service and computes the impact on latenc
 | `name` | string | conditional* | Service name |
 | `namespace` | string | conditional* | Service namespace |
 | `currentPods` | number | **required** | Current pod count (positive integer) |
-| `newPods` | number | **required** | New pod count (positive integer) |
+| `newPods` | number | **required** | New pod count (positive integer). Aliases: `targetPods`, `pods` |
 | `latencyMetric` | string | optional | Latency metric (p50, p95, p99, default: p95) |
 | `model.type` | string | optional | Scaling model (bounded_sqrt, linear, default: bounded_sqrt) |
 | `model.alpha` | number | optional | Fixed overhead fraction (0.0-1.0, default: 0.5) |
 | `maxDepth` | number | optional | Traversal depth (1-3, default: 2) |
 
 *Either `serviceId` OR (`name` AND `namespace`) required.
+
+> **Parameter Aliases:** For convenience, `newPods` accepts aliases `targetPods` and `pods`. If multiple aliases are provided with conflicting values, the request returns 400.
 
 **Response:**
 
@@ -242,22 +257,39 @@ Simulates changing the pod count for a service and computes the impact on latenc
     "name": "frontend",
     "namespace": "default"
   },
-  "latencyMetric": "p95",
+  "scalingModel": {
+    "type": "bounded_sqrt",
+    "alpha": 0.5
+  },
+  "neighborhood": {
+    "description": "k-hop upstream subgraph around target (not full graph)",
+    "serviceCount": 2,
+    "edgeCount": 1,
+    "depthUsed": 2,
+    "generatedAt": "2025-12-25T08:22:28.950Z"
+  },
+  "latencyEstimate": {
+    "description": "Latency figures: baselineMs is current weighted mean, projectedMs is post-scaling estimate, unit is milliseconds",
+    "metric": "p95"
+  },
   "currentPods": 2,
   "newPods": 6,
   "affectedCallers": [
     {
       "serviceId": "default:loadgenerator",
-      "beforeMs": 34.67,
-      "afterMs": 24.89,
+      "name": "loadgenerator",
+      "namespace": "default",
+      "hopDistance": 1,
+      "baselineMs": 34.67,
+      "projectedMs": 24.89,
       "deltaMs": -9.78
     }
   ],
   "affectedPaths": [
     {
       "path": ["default:loadgenerator", "default:frontend"],
-      "beforeMs": 34.67,
-      "afterMs": 24.89,
+      "baselineMs": 34.67,
+      "projectedMs": 24.89,
       "deltaMs": -9.78
     }
   ]
@@ -266,8 +298,11 @@ Simulates changing the pod count for a service and computes the impact on latenc
 
 **Response Fields:**
 
-- `affectedCallers`: Callers with changed latency, sorted by absolute `deltaMs` descending
-- `beforeMs`, `afterMs`: Weighted mean latency (may be `null` if caller has zero traffic)
+- `neighborhood`: Metadata about the k-hop upstream subgraph used for analysis
+- `latencyEstimate`: Description and metric for latency values (all in milliseconds)
+- `affectedCallers`: ALL upstream nodes in neighborhood with latency impact, sorted by `|deltaMs|` descending
+- `hopDistance`: Minimum hop distance from caller to target (1 = direct, 2 = 2-hop, etc.)
+- `baselineMs`, `projectedMs`: Weighted mean latency before/after scaling (may be `null` if no traffic)
 - `deltaMs`: Latency change (negative = improvement)
 - `affectedPaths`: Top N paths by traffic with latency changes
 
@@ -281,7 +316,7 @@ Simulates changing the pod count for a service and computes the impact on latenc
 **Example:**
 
 ```bash
-curl -X POST http://localhost:3000/simulate/scale \
+curl -X POST http://localhost:7000/simulate/scale \
   -H "Content-Type: application/json" \
   -d '{
     "serviceId": "default:frontend",
@@ -381,7 +416,7 @@ newLatency = baseLatency * (currentPods / newPods)
 **Request:**
 
 ```bash
-curl -X POST http://localhost:3000/simulate/failure \
+curl -X POST http://localhost:7000/simulate/failure \
   -H "Content-Type: application/json" \
   -d '{
     "serviceId": "default:checkoutservice",
@@ -429,7 +464,7 @@ curl -X POST http://localhost:3000/simulate/failure \
 **Request:**
 
 ```bash
-curl -X POST http://localhost:3000/simulate/scale \
+curl -X POST http://localhost:7000/simulate/scale \
   -H "Content-Type: application/json" \
   -d '{
     "serviceId": "default:frontend",
@@ -507,7 +542,7 @@ npm start
 
 ```
 [2025-12-25T10:00:00.000Z] What-if Simulation Engine started
-Port: 3000
+Port: 7000
 Max traversal depth: 2
 Default latency metric: p95
 Scaling model: bounded_sqrt (alpha: 0.5)
@@ -517,7 +552,7 @@ Timeout: 8000ms
 ### Verify Deployment
 
 ```bash
-curl http://localhost:3000/health
+curl http://localhost:7000/health
 ```
 
 **Expected Response:**
@@ -597,7 +632,7 @@ npm test
 **Solution:** Verify service exists:
 
 ```bash
-curl -X POST http://localhost:3000/simulate/failure \
+curl -X POST http://localhost:7000/simulate/failure \
   -H "Content-Type: application/json" \
   -d '{"serviceId": "default:frontend"}'
 ```

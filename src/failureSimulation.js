@@ -30,18 +30,18 @@ const config = require('./config');
  * @property {Object} target - Target service info
  * @property {number} depth - Traversal depth used
  * @property {AffectedCaller[]} affectedCallers - Direct callers impacted
- * @property {BrokenPath[]} criticalPathsBroken - Top N broken paths
+ * @property {BrokenPath[]} criticalPathsToTarget - Top N caller→target paths that become unavailable
  */
 
 /**
- * Simulate failure of a service by removing it from the graph (in-memory only)
- * Calculates traffic loss and identifies broken paths
+ * Simulate failure of a service (treated as unavailable for path analysis)
+ * Calculates traffic loss and identifies caller→target paths that become unavailable
  * 
  * Algorithm:
  * 1. Fetch k-hop upstream neighborhood
- * 2. Remove target node (in-memory)
- * 3. For each direct caller, compute lostTrafficRps (sum of edge rates)
- * 4. Find top N paths that included target (sorted by pathRps)
+ * 2. Treat target as unavailable (not actually removed from snapshot)
+ * 3. For each direct caller, aggregate lostTrafficRps (sum of all edge rates to target)
+ * 4. Find top N caller→target paths (sorted by pathRps)
  * 
  * @param {FailureSimulationRequest} request - Simulation request
  * @returns {Promise<FailureSimulationResult>}
@@ -49,9 +49,9 @@ const config = require('./config');
 async function simulateFailure(request) {
     const maxDepth = request.maxDepth || config.simulation.maxTraversalDepth;
     
-    // Validate depth
-    if (maxDepth < 1 || maxDepth > 3) {
-        throw new Error(`maxDepth must be 1, 2, or 3. Got: ${maxDepth}`);
+    // Validate depth (must be integer 1-3)
+    if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 3) {
+        throw new Error(`maxDepth must be integer 1, 2, or 3. Got: ${maxDepth}`);
     }
     
     // Fetch upstream neighborhood (read-only Neo4j query)
@@ -66,23 +66,48 @@ async function simulateFailure(request) {
     // Find all direct callers of target
     const directCallers = snapshot.incomingEdges.get(request.serviceId) || [];
     
-    // Calculate lost traffic for each caller
-    const affectedCallers = directCallers.map(edge => ({
-        serviceId: edge.source,
-        lostTrafficRps: edge.rate,
-        edgeErrorRate: edge.errorRate
-    }));
+    // Aggregate lost traffic by caller (handles duplicate edges to same target)
+    const callerMap = new Map();
+    for (const edge of directCallers) {
+        const id = edge.source;
+        const callerNode = snapshot.nodes.get(id);
+        const prev = callerMap.get(id) || { 
+            serviceId: id, 
+            name: callerNode?.name ?? id.split(':')[1],
+            namespace: callerNode?.namespace ?? id.split(':')[0],
+            lostTrafficRps: 0, 
+            edgeErrorRate: 0 
+        };
+        
+        prev.lostTrafficRps += edge.rate;
+        // Use max error rate as worst-case for this caller
+        prev.edgeErrorRate = Math.max(prev.edgeErrorRate, edge.errorRate);
+        
+        callerMap.set(id, prev);
+    }
     
-    // Sort by lost traffic descending
-    affectedCallers.sort((a, b) => b.lostTrafficRps - a.lostTrafficRps);
+    // Convert to array and sort by lost traffic descending
+    const affectedCallers = Array.from(callerMap.values())
+        .sort((a, b) => b.lostTrafficRps - a.lostTrafficRps);
     
-    // Find top N broken paths
-    const brokenPaths = findTopPathsToTarget(
+    // Find top N paths to target (de-duplicated by path key)
+    const rawPaths = findTopPathsToTarget(
         snapshot,
         request.serviceId,
         maxDepth,
-        config.simulation.maxPathsReturned
+        config.simulation.maxPathsReturned * 2 // Fetch extra to allow for de-dupe
     );
+    
+    // De-duplicate paths by join key
+    const seenPaths = new Set();
+    const criticalPathsToTarget = [];
+    for (const pathInfo of rawPaths) {
+        const key = pathInfo.path.join('->');
+        if (seenPaths.has(key)) continue;
+        seenPaths.add(key);
+        criticalPathsToTarget.push(pathInfo);
+        if (criticalPathsToTarget.length >= config.simulation.maxPathsReturned) break;
+    }
     
     return {
         target: {
@@ -90,9 +115,16 @@ async function simulateFailure(request) {
             name: targetNode.name,
             namespace: targetNode.namespace
         },
-        depth: maxDepth,
+        neighborhood: {
+            description: 'k-hop upstream subgraph around target (not full graph)',
+            serviceCount: snapshot.nodes.size,
+            edgeCount: snapshot.edges.length,
+            depthUsed: maxDepth,
+            generatedAt: new Date().toISOString()
+        },
         affectedCallers,
-        criticalPathsBroken: brokenPaths
+        criticalPathsToTarget,
+        totalLostTrafficRps: affectedCallers.reduce((sum, c) => sum + c.lostTrafficRps, 0)
     };
 }
 

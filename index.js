@@ -5,6 +5,7 @@ const { simulateFailure } = require('./src/failureSimulation');
 const { simulateScaling } = require('./src/scalingSimulation');
 const {
     parseServiceIdentifier,
+    normalizePodParams,
     validateScalingParams,
     validateLatencyMetric,
     validateDepth,
@@ -24,7 +25,7 @@ const startTime = Date.now();
 app.get('/health', async (req, res) => {
     try {
         const health = await checkHealth();
-        const uptime = (Date.now() - startTime) / 1000;
+        const uptimeSeconds = Math.round((Date.now() - startTime) / 100) / 10; // Round to 1 decimal
         
         res.json({
             status: health.connected ? 'ok' : 'degraded',
@@ -33,7 +34,11 @@ app.get('/health', async (req, res) => {
                 services: health.services,
                 error: health.error
             },
-            uptime
+            config: {
+                maxTraversalDepth: config.simulation.maxTraversalDepth,
+                defaultLatencyMetric: config.simulation.defaultLatencyMetric
+            },
+            uptimeSeconds
         });
     } catch (error) {
         res.status(500).json({
@@ -102,7 +107,7 @@ app.post('/simulate/failure', async (req, res) => {
  * - name: string (optional, with namespace)
  * - namespace: string (optional, with name)
  * - currentPods: number (required)
- * - newPods: number (required)
+ * - newPods: number (required, aliases: targetPods, pods)
  * - latencyMetric: string (optional, p50/p95/p99)
  * - model: object (optional, { type: 'bounded_sqrt', alpha: 0.5 })
  * - maxDepth: number (optional, default from config)
@@ -111,7 +116,8 @@ app.post('/simulate/scale', async (req, res) => {
     try {
         // Validate and parse request
         const identifier = parseServiceIdentifier(req.body);
-        validateScalingParams(req.body.currentPods, req.body.newPods);
+        const newPods = normalizePodParams(req.body);
+        validateScalingParams(req.body.currentPods, newPods);
         const latencyMetric = validateLatencyMetric(
             req.body.latencyMetric,
             config.simulation.defaultLatencyMetric
@@ -127,7 +133,7 @@ app.post('/simulate/scale', async (req, res) => {
         const simulationPromise = simulateScaling({
             serviceId: identifier.serviceId,
             currentPods: req.body.currentPods,
-            newPods: req.body.newPods,
+            newPods,
             latencyMetric,
             model,
             maxDepth

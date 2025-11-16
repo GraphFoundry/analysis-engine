@@ -47,6 +47,6 @@ module.exports = {
     maxPathsReturned: parseInt(process.env.MAX_PATHS_RETURNED) || 10
   },
   server: {
-    port: parseInt(process.env.PORT) || 3000
+    port: parseInt(process.env.PORT) || 7000
   }
 };

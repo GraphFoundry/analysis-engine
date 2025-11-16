@@ -1,6 +1,32 @@
 require('dotenv').config();
 
 /**
+ * Validate required environment variables at startup.
+ * Fails fast with clear error messages before any connections are attempted.
+ * 
+ * Call this explicitly from index.js before starting the server.
+ * Not auto-run on import to avoid breaking tests and utility scripts.
+ */
+function validateEnv() {
+  const errors = [];
+  
+  if (!process.env.NEO4J_URI) {
+    errors.push('NEO4J_URI is required (e.g., neo4j+s://xxxx.databases.neo4j.io)');
+  }
+  
+  if (!process.env.NEO4J_PASSWORD) {
+    errors.push('NEO4J_PASSWORD is required');
+  }
+  
+  if (errors.length > 0) {
+    console.error('\n❌ Missing required environment variables:\n');
+    errors.forEach(err => console.error(`   - ${err}`));
+    console.error('\n   Copy .env.example to .env and fill in your Neo4j credentials.\n');
+    process.exit(1);
+  }
+}
+
+/**
  * @typedef {Object} Neo4jConfig
  * @property {string} uri - Neo4j connection URI
  * @property {string} user - Neo4j username
@@ -31,11 +57,11 @@ require('dotenv').config();
  */
 
 /** @type {Config} */
-module.exports = {
+const config = {
   neo4j: {
-    uri: process.env.NEO4J_URI || 'neo4j+s://517b3e75.databases.neo4j.io',
+    uri: process.env.NEO4J_URI,
     user: process.env.NEO4J_USER || 'neo4j',
-    password: process.env.NEO4J_PASSWORD || 'Ex-hfrpIOCfghD-dZ04f2ya3-zbUpBdsZSgjwl6a8Rg'
+    password: process.env.NEO4J_PASSWORD
   },
   simulation: {
     defaultLatencyMetric: process.env.DEFAULT_LATENCY_METRIC || 'p95',
@@ -50,3 +76,6 @@ module.exports = {
     port: parseInt(process.env.PORT) || 7000
   }
 };
+
+module.exports = config;
+module.exports.validateEnv = validateEnv;

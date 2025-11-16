@@ -1,10 +1,17 @@
-// Temporary script to verify Neo4j schema
+// Utility script to verify Neo4j schema
+// Requires: NEO4J_URI, NEO4J_PASSWORD in .env
 const neo4j = require('neo4j-driver');
 require('dotenv').config();
 
-const uri = process.env.NEO4J_URI || 'neo4j+s://517b3e75.databases.neo4j.io';
+if (!process.env.NEO4J_URI || !process.env.NEO4J_PASSWORD) {
+    console.error('❌ Missing NEO4J_URI or NEO4J_PASSWORD in environment.');
+    console.error('   Copy .env.example to .env and fill in your credentials.');
+    process.exit(1);
+}
+
+const uri = process.env.NEO4J_URI;
 const user = process.env.NEO4J_USER || 'neo4j';
-const password = process.env.NEO4J_PASSWORD || 'Ex-hfrpIOCfghD-dZ04f2ya3-zbUpBdsZSgjwl6a8Rg';
+const password = process.env.NEO4J_PASSWORD;
 
 const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
 

@@ -1,5 +1,6 @@
 const express = require('express');
 const config = require('./src/config');
+const { validateEnv } = require('./src/config');
 const { checkHealth, closeDriver } = require('./src/neo4j');
 const { simulateFailure } = require('./src/failureSimulation');
 const { simulateScaling } = require('./src/scalingSimulation');
@@ -11,6 +12,9 @@ const {
     validateDepth,
     validateScalingModel
 } = require('./src/validator');
+
+// Validate environment before starting server
+validateEnv();
 
 const app = express();
 app.use(express.json());

@@ -1,3 +1,8 @@
+---
+description: Plan a change before implementing — gather evidence, propose steps, identify risks.
+agent: planner
+---
+
 # Prompt: Plan a Change
 
 Use this prompt when you want Copilot to analyze and plan a change before implementing.

@@ -4,7 +4,7 @@ description: Analyze requests, gather evidence, and produce implementation plans
 tools: ['read', 'search']
 handoffs:
   - label: Start Implementation
-    agent: implementer
+    agent: Implementer
     prompt: Implement exactly the approved plan. User has said OK IMPLEMENT NOW.
     send: false
 ---

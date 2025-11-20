@@ -4,7 +4,7 @@ description: Execute approved plans by creating, editing, or deleting files (req
 tools: ['read', 'search', 'edit']
 handoffs:
   - label: Review My Changes
-    agent: reviewer
+    agent: Reviewer
     prompt: Validate changes for rule violations.
     send: false
 ---

@@ -4,7 +4,7 @@ description: Validate implemented changes against repo rules and approved plans.
 tools: ['read', 'search']
 handoffs:
   - label: Re-plan
-    agent: planner
+    agent: Planner
     prompt: Create an alternative plan based on review feedback.
     send: false
 ---

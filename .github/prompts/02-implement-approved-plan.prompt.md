@@ -1,6 +1,6 @@
 ---
 description: Trigger implementation of an approved plan after user says OK IMPLEMENT NOW.
-agent: implementer
+agent: Implementer
 ---
 
 # Prompt: Implement Approved Plan

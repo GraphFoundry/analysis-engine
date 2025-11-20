@@ -1,6 +1,6 @@
 ---
 description: Plan a change before implementing — gather evidence, propose steps, identify risks.
-agent: planner
+agent: Planner
 ---
 
 # Prompt: Plan a Change

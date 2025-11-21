@@ -1,5 +1,6 @@
 ---
 applyTo: "**/graph.js,**/api/**/*.js,src/**/*.js"
+description: 'Graph API must be preferred over direct Neo4j access - use Neo4j only as fallback'
 ---
 
 # Graph API First Policy

@@ -1,5 +1,6 @@
 ---
 applyTo: "**/neo4j.js,**/*.cypher,**/graph.js"
+description: 'All Neo4j queries must be read-only - no CREATE, MERGE, DELETE, or schema operations'
 ---
 
 # Neo4j Read-Only Fallback Policy

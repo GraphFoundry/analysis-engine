@@ -1,5 +1,6 @@
 ---
 applyTo: "**/*"
+description: 'Defines what this repository owns vs external team ownership - Neo4j schema, Graph API, and metrics are external'
 ---
 
 # Ownership Boundaries

@@ -1,5 +1,6 @@
 ---
 applyTo: "k8s/**/*,**/Dockerfile,**/*.yaml"
+description: 'Kubernetes deployment context - Kustomize structure, Minikube local development, and manifest guidelines'
 ---
 
 # Kubernetes & Minikube Scope

@@ -1,5 +1,6 @@
 ---
 applyTo: "**/*.js"
+description: 'Security rules for error handling, logging, and secrets - never log credentials, use redactCredentials()'
 ---
 
 # Errors, Logging & Secrets Policy

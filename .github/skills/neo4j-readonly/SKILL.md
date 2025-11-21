@@ -1,6 +1,7 @@
 ---
 name: neo4j-readonly
 description: Guide for writing read-only Neo4j Cypher queries in this project. Use this when asked to query Neo4j, access graph data via fallback, or write Cypher queries.
+license: MIT
 ---
 
 # Neo4j Read-Only Query Skill

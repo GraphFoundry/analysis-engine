@@ -1,6 +1,7 @@
 ---
 name: k8s-deployment
 description: Guide for Kubernetes deployment using Minikube. Use this when asked about deployment, Kubernetes manifests, or local k8s testing.
+license: MIT
 ---
 
 # Kubernetes Deployment Skill

@@ -1,5 +1,6 @@
 ---
 applyTo: "**/*"
+description: 'Absolute operating rules that override all other guidance - implementation locks, evidence requirements, and scope limits'
 ---
 
 # Operating Rules

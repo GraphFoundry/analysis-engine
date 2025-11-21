@@ -1,6 +1,7 @@
 ---
 name: simulation-runner
 description: Guide for running and understanding what-if simulations. Use this when asked to simulate failures, scaling scenarios, or understand simulation logic.
+license: MIT
 ---
 
 # Simulation Runner Skill

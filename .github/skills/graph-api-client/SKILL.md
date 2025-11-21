@@ -1,6 +1,7 @@
 ---
 name: graph-api-client
 description: Guide for consuming the leader-owned Graph API service. Use this when asked to fetch graph data, integrate with Graph API, or understand API consumption patterns.
+license: MIT
 ---
 
 # Graph API Client Skill

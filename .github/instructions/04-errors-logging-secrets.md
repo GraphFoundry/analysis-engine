@@ -1,3 +1,7 @@
+---
+applyTo: "**/*.js"
+---
+
 # Errors, Logging & Secrets Policy
 
 This document governs how Copilot must handle errors, logging, and secrets.

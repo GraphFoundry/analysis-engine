@@ -1,3 +1,7 @@
+---
+applyTo: "**/neo4j.js,**/*.cypher,**/graph.js"
+---
+
 # Neo4j Read-Only Fallback Policy
 
 This document governs how Copilot must handle Neo4j access in this repository.

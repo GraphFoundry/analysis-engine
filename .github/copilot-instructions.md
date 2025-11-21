@@ -178,6 +178,10 @@ Unless user overrides, the default deliverable is a `.github` pack containing:
 - `.github/agents/`: `planner.md`, `implementer.md`, `reviewer.md`
 - `.github/instructions/`: operating rules, ownership, Graph API policy, Neo4j fallback, errors/logging, K8s scope
 - `.github/prompts/`: reusable workflow prompts
+- `.github/skills/`: Agent Skills for specialized workflows (neo4j-readonly, graph-api-client, simulation-runner, k8s-deployment)
+
+**Also see:**
+- `AGENTS.md` (root): Universal agent instructions compatible with any AI agent
 
 **Blocked until `OK IMPLEMENT NOW`.**
 

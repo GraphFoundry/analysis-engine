@@ -1,3 +1,7 @@
+---
+applyTo: "k8s/**/*,**/Dockerfile,**/*.yaml"
+---
+
 # Kubernetes & Minikube Scope
 
 This document defines the Kubernetes deployment context for this service.

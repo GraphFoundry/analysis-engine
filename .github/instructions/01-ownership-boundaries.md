@@ -1,3 +1,7 @@
+---
+applyTo: "**/*"
+---
+
 # Ownership Boundaries
 
 This document defines what this repository owns versus what is owned by external teams.

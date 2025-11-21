@@ -1,3 +1,7 @@
+---
+applyTo: "**/*"
+---
+
 # Operating Rules
 
 These rules are absolute and override any other guidance.

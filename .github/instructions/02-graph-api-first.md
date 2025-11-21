@@ -1,3 +1,7 @@
+---
+applyTo: "**/graph.js,**/api/**/*.js,src/**/*.js"
+---
+
 # Graph API First Policy
 
 When Copilot needs graph or topology data, it must prefer the leader's Graph API over direct Neo4j access.

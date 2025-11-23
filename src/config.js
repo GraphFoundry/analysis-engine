@@ -50,10 +50,19 @@ function validateEnv() {
  */
 
 /**
+ * @typedef {Object} GraphApiConfig
+ * @property {string} baseUrl - Base URL of service-graph-engine
+ * @property {boolean} enabled - Whether to use the Graph API
+ * @property {number} timeoutMs - Request timeout in milliseconds
+ * @property {boolean} required - Whether Graph API failure should degrade overall status
+ */
+
+/**
  * @typedef {Object} Config
  * @property {Neo4jConfig} neo4j
  * @property {SimulationConfig} simulation
  * @property {ServerConfig} server
+ * @property {GraphApiConfig} graphApi
  */
 
 /** @type {Config} */
@@ -74,6 +83,12 @@ const config = {
   },
   server: {
     port: parseInt(process.env.PORT) || 7000
+  },
+  graphApi: {
+    baseUrl: process.env.SERVICE_GRAPH_ENGINE_URL || '',
+    enabled: process.env.USE_GRAPH_ENGINE_API === 'true',
+    timeoutMs: parseInt(process.env.GRAPH_API_TIMEOUT_MS) || 5000,
+    required: process.env.REQUIRE_GRAPH_API === 'true'
   }
 };
 

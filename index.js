@@ -2,6 +2,7 @@ const express = require('express');
 const config = require('./src/config');
 const { validateEnv } = require('./src/config');
 const { checkHealth, closeDriver } = require('./src/neo4j');
+const { checkGraphHealth } = require('./src/graphEngineClient');
 const { simulateFailure } = require('./src/failureSimulation');
 const { simulateScaling } = require('./src/scalingSimulation');
 const {
@@ -24,23 +25,64 @@ const startTime = Date.now();
 
 /**
  * Health check endpoint
- * Returns Neo4j connectivity status and service count
+ * Returns Neo4j connectivity status, Graph API status, and service count
  */
 app.get('/health', async (req, res) => {
     try {
-        const health = await checkHealth();
-        const uptimeSeconds = Math.round((Date.now() - startTime) / 100) / 10; // Round to 1 decimal
-        
+        // Neo4j health (always checked)
+        const neo4jHealth = await checkHealth();
+        const uptimeSeconds = Math.round((Date.now() - startTime) / 100) / 10;
+
+        // Graph API health (conditional)
+        let graphApi;
+        if (config.graphApi.enabled) {
+            const graphResult = await checkGraphHealth();
+            if (graphResult.ok) {
+                graphApi = {
+                    enabled: true,
+                    available: true,
+                    status: graphResult.data.status,
+                    stale: graphResult.data.stale,
+                    lastUpdatedSecondsAgo: graphResult.data.lastUpdatedSecondsAgo,
+                    // Debug fields for troubleshooting
+                    baseUrl: config.graphApi.baseUrl,
+                    timeoutMs: config.graphApi.timeoutMs
+                };
+            } else {
+                graphApi = {
+                    enabled: true,
+                    available: false,
+                    reason: graphResult.error,
+                    // Debug fields for troubleshooting
+                    baseUrl: config.graphApi.baseUrl,
+                    timeoutMs: config.graphApi.timeoutMs
+                };
+            }
+        } else {
+            graphApi = { enabled: false, reason: 'disabled' };
+        }
+
+        // Determine overall status
+        // Neo4j down = degraded
+        // Graph API down = degraded only if REQUIRE_GRAPH_API=true
+        const neo4jOk = neo4jHealth.connected;
+        const graphApiOk = !config.graphApi.enabled || 
+                          !config.graphApi.required || 
+                          (graphApi.available === true);
+        const overallStatus = (neo4jOk && graphApiOk) ? 'ok' : 'degraded';
+
         res.json({
-            status: health.connected ? 'ok' : 'degraded',
+            status: overallStatus,
             neo4j: {
-                connected: health.connected,
-                services: health.services,
-                error: health.error
+                connected: neo4jHealth.connected,
+                services: neo4jHealth.services,
+                error: neo4jHealth.error
             },
+            graphApi,
             config: {
                 maxTraversalDepth: config.simulation.maxTraversalDepth,
-                defaultLatencyMetric: config.simulation.defaultLatencyMetric
+                defaultLatencyMetric: config.simulation.defaultLatencyMetric,
+                graphApiEnabled: config.graphApi.enabled
             },
             uptimeSeconds
         });

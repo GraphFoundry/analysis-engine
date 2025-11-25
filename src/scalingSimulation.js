@@ -1,9 +1,10 @@
-const { fetchUpstreamNeighborhood, findTopPathsToTarget } = require('./graph');
+const { getProvider } = require('./providers');
+const { findTopPathsToTarget } = require('./pathAnalysis');
 const config = require('./config');
 
 /**
- * @typedef {import('./neo4j').EdgeData} EdgeData
- * @typedef {import('./graph').GraphSnapshot} GraphSnapshot
+ * @typedef {import('./providers/GraphDataProvider').EdgeData} EdgeData
+ * @typedef {import('./providers/GraphDataProvider').GraphSnapshot} GraphSnapshot
  */
 
 /**
@@ -192,18 +193,22 @@ async function simulateScaling(request) {
         throw new Error('alpha must be between 0 and 1');
     }
     
-    // Fetch upstream neighborhood (read-only Neo4j query)
-    const snapshot = await fetchUpstreamNeighborhood(request.serviceId, maxDepth);
+    // Fetch upstream neighborhood via provider (Neo4j or Graph API)
+    const provider = getProvider();
+    const snapshot = await provider.fetchUpstreamNeighborhood(request.serviceId, maxDepth);
+    
+    // Use normalized target key from snapshot (handles namespace:name vs plain name difference)
+    const targetKey = snapshot.targetKey || request.serviceId;
     
     // Get target node info
-    const targetNode = snapshot.nodes.get(request.serviceId);
+    const targetNode = snapshot.nodes.get(targetKey);
     if (!targetNode) {
         throw new Error(`Service not found: ${request.serviceId}`);
     }
     
     // Apply scaling formula to target (compute ONCE using rate-weighted mean of incoming latencies)
     const adjustedLatencies = new Map();
-    const incomingEdges = snapshot.incomingEdges.get(request.serviceId) || [];
+    const incomingEdges = snapshot.incomingEdges.get(targetKey) || [];
     
     // Compute rate-weighted mean baseline latency from incoming edges
     let baseLatency = null;
@@ -242,7 +247,7 @@ async function simulateScaling(request) {
         } else {
             throw new Error(`Unknown scaling model: ${modelType}`);
         }
-        adjustedLatencies.set(request.serviceId, newLatency);
+        adjustedLatencies.set(targetKey, newLatency);
     }
     
     // Compute impact on ALL upstream nodes (not just direct callers)
@@ -250,7 +255,7 @@ async function simulateScaling(request) {
     const affectedCallers = [];
     for (const [nodeId, nodeData] of snapshot.nodes) {
         // Skip the target itself
-        if (nodeId === request.serviceId) continue;
+        if (nodeId === targetKey) continue;
         
         const nodeEdges = snapshot.outgoingEdges.get(nodeId) || [];
         if (nodeEdges.length === 0) continue;
@@ -265,7 +270,7 @@ async function simulateScaling(request) {
             serviceId: nodeId,
             name: nodeData?.name ?? nodeId.split(':')[1],
             namespace: nodeData?.namespace ?? nodeId.split(':')[0],
-            hopDistance: computeHopDistance(snapshot, nodeId, request.serviceId),
+            hopDistance: computeHopDistance(snapshot, nodeId, targetKey),
             beforeMs,
             afterMs,
             deltaMs
@@ -282,7 +287,7 @@ async function simulateScaling(request) {
     // Compute real multi-hop paths using findTopPathsToTarget
     const topPaths = findTopPathsToTarget(
         snapshot,
-        request.serviceId,
+        targetKey,
         maxDepth,
         config.simulation.maxPathsReturned
     );
@@ -311,7 +316,7 @@ async function simulateScaling(request) {
             beforeMs += edgeLatency;
             
             // Use adjusted latency if this edge points to target
-            if (target === request.serviceId && adjustedLatencies.has(target)) {
+            if (target === targetKey && adjustedLatencies.has(target)) {
                 afterMs += adjustedLatencies.get(target);
             } else {
                 afterMs += edgeLatency;
@@ -380,9 +385,9 @@ async function simulateScaling(request) {
         latencyEstimate: {
             description: 'Rate-weighted mean of incoming edge latency to target',
             baselineMs: baseLatency,
-            projectedMs: adjustedLatencies.get(request.serviceId) ?? null,
-            deltaMs: (baseLatency !== null && adjustedLatencies.has(request.serviceId)) 
-                ? (adjustedLatencies.get(request.serviceId) - baseLatency) 
+            projectedMs: adjustedLatencies.get(targetKey) ?? null,
+            deltaMs: (baseLatency !== null && adjustedLatencies.has(targetKey)) 
+                ? (adjustedLatencies.get(targetKey) - baseLatency) 
                 : null,
             unit: 'milliseconds'
         },

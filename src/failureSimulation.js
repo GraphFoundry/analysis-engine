@@ -1,9 +1,10 @@
-const { fetchUpstreamNeighborhood, findTopPathsToTarget } = require('./graph');
+const { getProvider } = require('./providers');
+const { findTopPathsToTarget } = require('./pathAnalysis');
 const config = require('./config');
 
 /**
- * @typedef {import('./neo4j').EdgeData} EdgeData
- * @typedef {import('./graph').GraphSnapshot} GraphSnapshot
+ * @typedef {import('./providers/GraphDataProvider').EdgeData} EdgeData
+ * @typedef {import('./providers/GraphDataProvider').GraphSnapshot} GraphSnapshot
  */
 
 /**
@@ -54,17 +55,21 @@ async function simulateFailure(request) {
         throw new Error(`maxDepth must be integer 1, 2, or 3. Got: ${maxDepth}`);
     }
     
-    // Fetch upstream neighborhood (read-only Neo4j query)
-    const snapshot = await fetchUpstreamNeighborhood(request.serviceId, maxDepth);
+    // Fetch upstream neighborhood via provider (Neo4j or Graph API)
+    const provider = getProvider();
+    const snapshot = await provider.fetchUpstreamNeighborhood(request.serviceId, maxDepth);
+    
+    // Use normalized target key from snapshot (handles namespace:name vs plain name difference)
+    const targetKey = snapshot.targetKey || request.serviceId;
     
     // Get target node info
-    const targetNode = snapshot.nodes.get(request.serviceId);
+    const targetNode = snapshot.nodes.get(targetKey);
     if (!targetNode) {
         throw new Error(`Service not found: ${request.serviceId}`);
     }
     
     // Find all direct callers of target
-    const directCallers = snapshot.incomingEdges.get(request.serviceId) || [];
+    const directCallers = snapshot.incomingEdges.get(targetKey) || [];
     
     // Aggregate lost traffic by caller (handles duplicate edges to same target)
     const callerMap = new Map();
@@ -93,7 +98,7 @@ async function simulateFailure(request) {
     // Find top N paths to target (de-duplicated by path key)
     const rawPaths = findTopPathsToTarget(
         snapshot,
-        request.serviceId,
+        targetKey,
         maxDepth,
         config.simulation.maxPathsReturned * 2 // Fetch extra to allow for de-dupe
     );

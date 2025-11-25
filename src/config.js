@@ -10,18 +10,30 @@ require('dotenv').config();
 function validateEnv() {
   const errors = [];
   
-  if (!process.env.NEO4J_URI) {
-    errors.push('NEO4J_URI is required (e.g., neo4j+s://xxxx.databases.neo4j.io)');
-  }
-  
-  if (!process.env.NEO4J_PASSWORD) {
-    errors.push('NEO4J_PASSWORD is required');
+  if (process.env.USE_GRAPH_ENGINE_API === 'true') {
+    // Graph API mode - require base URL
+    if (!process.env.GRAPH_ENGINE_BASE_URL && !process.env.SERVICE_GRAPH_ENGINE_URL) {
+      errors.push('GRAPH_ENGINE_BASE_URL (or SERVICE_GRAPH_ENGINE_URL) is required when USE_GRAPH_ENGINE_API=true');
+    }
+  } else {
+    // Neo4j mode - require credentials
+    if (!process.env.NEO4J_URI) {
+      errors.push('NEO4J_URI is required (e.g., neo4j+s://xxxx.databases.neo4j.io)');
+    }
+    
+    if (!process.env.NEO4J_PASSWORD) {
+      errors.push('NEO4J_PASSWORD is required');
+    }
   }
   
   if (errors.length > 0) {
     console.error('\n❌ Missing required environment variables:\n');
     errors.forEach(err => console.error(`   - ${err}`));
-    console.error('\n   Copy .env.example to .env and fill in your Neo4j credentials.\n');
+    if (process.env.USE_GRAPH_ENGINE_API === 'true') {
+      console.error('\n   Set GRAPH_ENGINE_BASE_URL to point to service-graph-engine.\n');
+    } else {
+      console.error('\n   Copy .env.example to .env and fill in your Neo4j credentials.\n');
+    }
     process.exit(1);
   }
 }
@@ -85,7 +97,7 @@ const config = {
     port: parseInt(process.env.PORT) || 7000
   },
   graphApi: {
-    baseUrl: process.env.SERVICE_GRAPH_ENGINE_URL || '',
+    baseUrl: process.env.GRAPH_ENGINE_BASE_URL || process.env.SERVICE_GRAPH_ENGINE_URL || '',
     enabled: process.env.USE_GRAPH_ENGINE_API === 'true',
     timeoutMs: parseInt(process.env.GRAPH_API_TIMEOUT_MS) || 5000,
     required: process.env.REQUIRE_GRAPH_API === 'true'

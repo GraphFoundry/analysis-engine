@@ -119,8 +119,42 @@ function isEnabled() {
     return config.graphApi.enabled;
 }
 
+/**
+ * Get k-hop neighborhood for a service
+ * @param {string} serviceName - Service name (e.g., "frontend")
+ * @param {number} k - Number of hops
+ * @returns {Promise<ClientSuccess|ClientError>}
+ */
+async function getNeighborhood(serviceName, k) {
+    if (!config.graphApi.enabled) {
+        return { ok: false, error: 'Graph API is disabled' };
+    }
+
+    const baseUrl = normalizeBaseUrl(config.graphApi.baseUrl);
+    const url = `${baseUrl}/services/${encodeURIComponent(serviceName)}/neighborhood?k=${k}`;
+    return httpGet(url, config.graphApi.timeoutMs);
+}
+
+/**
+ * Get peers (callers or callees) for a service
+ * @param {string} serviceName - Service name (e.g., "frontend")
+ * @param {string} direction - 'in' for callers, 'out' for callees
+ * @returns {Promise<ClientSuccess|ClientError>}
+ */
+async function getPeers(serviceName, direction) {
+    if (!config.graphApi.enabled) {
+        return { ok: false, error: 'Graph API is disabled' };
+    }
+
+    const baseUrl = normalizeBaseUrl(config.graphApi.baseUrl);
+    const url = `${baseUrl}/services/${encodeURIComponent(serviceName)}/peers?direction=${direction}`;
+    return httpGet(url, config.graphApi.timeoutMs);
+}
+
 module.exports = {
     checkGraphHealth,
+    getNeighborhood,
+    getPeers,
     getBaseUrl,
     isEnabled,
     // Exported for testing

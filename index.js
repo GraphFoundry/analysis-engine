@@ -1,7 +1,7 @@
 const express = require('express');
 const config = require('./src/config');
 const { validateEnv } = require('./src/config');
-const { checkHealth, closeDriver } = require('./src/neo4j');
+const { getProvider } = require('./src/providers');
 const { checkGraphHealth } = require('./src/graphEngineClient');
 const { simulateFailure } = require('./src/failureSimulation');
 const { simulateScaling } = require('./src/scalingSimulation');
@@ -25,12 +25,12 @@ const startTime = Date.now();
 
 /**
  * Health check endpoint
- * Returns Neo4j connectivity status, Graph API status, and service count
+ * Returns data source connectivity status (Neo4j or Graph API) and config info
  */
 app.get('/health', async (req, res) => {
     try {
-        // Neo4j health (always checked)
-        const neo4jHealth = await checkHealth();
+        const provider = getProvider();
+        const providerHealth = await provider.checkHealth();
         const uptimeSeconds = Math.round((Date.now() - startTime) / 100) / 10;
 
         // Graph API health (conditional)
@@ -62,21 +62,26 @@ app.get('/health', async (req, res) => {
             graphApi = { enabled: false, reason: 'disabled' };
         }
 
-        // Determine overall status
-        // Neo4j down = degraded
-        // Graph API down = degraded only if REQUIRE_GRAPH_API=true
-        const neo4jOk = neo4jHealth.connected;
-        const graphApiOk = !config.graphApi.enabled || 
-                          !config.graphApi.required || 
-                          (graphApi.available === true);
-        const overallStatus = (neo4jOk && graphApiOk) ? 'ok' : 'degraded';
+        // Determine overall status based on active provider
+        let overallStatus;
+        if (config.graphApi.enabled) {
+            // In Graph API mode, check Graph API availability
+            const graphApiOk = graphApi.available === true;
+            const staleOk = !config.graphApi.required || !graphApi.stale;
+            overallStatus = (graphApiOk && staleOk) ? 'ok' : 'degraded';
+        } else {
+            // In Neo4j mode, check Neo4j connectivity
+            overallStatus = providerHealth.connected ? 'ok' : 'degraded';
+        }
 
         res.json({
             status: overallStatus,
-            neo4j: {
-                connected: neo4jHealth.connected,
-                services: neo4jHealth.services,
-                error: neo4jHealth.error
+            dataSource: config.graphApi.enabled ? 'graph-api' : 'neo4j',
+            provider: {
+                connected: providerHealth.connected,
+                services: providerHealth.services,
+                stale: providerHealth.stale,
+                error: providerHealth.error
             },
             graphApi,
             config: {
@@ -131,7 +136,10 @@ app.post('/simulate/failure', async (req, res) => {
         
         res.json(result);
     } catch (error) {
-        if (error.message.includes('not found')) {
+        // Handle errors with explicit statusCode (e.g., stale graph data)
+        if (error.statusCode) {
+            res.status(error.statusCode).json({ error: error.message });
+        } else if (error.message.includes('not found')) {
             res.status(404).json({ error: error.message });
         } else if (error.message.includes('timeout')) {
             res.status(504).json({ error: error.message });
@@ -196,7 +204,10 @@ app.post('/simulate/scale', async (req, res) => {
         
         res.json(result);
     } catch (error) {
-        if (error.message.includes('not found')) {
+        // Handle errors with explicit statusCode (e.g., stale graph data)
+        if (error.statusCode) {
+            res.status(error.statusCode).json({ error: error.message });
+        } else if (error.message.includes('not found')) {
             res.status(404).json({ error: error.message });
         } else if (error.message.includes('timeout')) {
             res.status(504).json({ error: error.message });
@@ -223,8 +234,9 @@ const server = app.listen(config.server.port, () => {
 const shutdown = async () => {
     console.log('\nShutting down service...');
     server.close();
-    await closeDriver();
-    console.log('Neo4j connection closed. Bye.');
+    const provider = getProvider();
+    await provider.close();
+    console.log('Provider connection closed. Bye.');
     process.exit(0);
 };
 

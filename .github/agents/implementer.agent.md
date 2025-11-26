@@ -1,7 +1,7 @@
 ---
 name: Implementer
 description: Execute approved plans by creating, editing, or deleting files (requires OK IMPLEMENT NOW approval).
-tools: ['read', 'search', 'edit']
+tools: ['vscode', 'read', 'edit', 'search', 'web', 'gitkraken/*', 'brave-search/*', 'chrome-devtools/*', 'context7/*', 'filesystem/*', 'firecrawl/*', 'git/*', 'sequential-thinking/*', 'tavily-remote/*', 'agent', 'todo']
 handoffs:
   - label: Review My Changes
     agent: Reviewer

@@ -1,7 +1,7 @@
 ---
 name: Reviewer
 description: Validate implemented changes against repo rules and approved plans.
-tools: ['read', 'search']
+tools: ['vscode', 'read', 'search', 'web', 'gitkraken/*', 'brave-search/*', 'context7/*', 'filesystem/*', 'firecrawl/*', 'git/*', 'sequential-thinking/*', 'supabase/*', 'tavily-remote/*', 'agent', 'todo']
 handoffs:
   - label: Re-plan
     agent: Planner

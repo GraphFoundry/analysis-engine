@@ -1,7 +1,7 @@
 ---
 name: Planner
 description: Analyze requests, gather evidence, and produce implementation plans without making changes.
-tools: ['read', 'search']
+tools: ['vscode', 'read', 'search', 'web', 'gitkraken/*', 'brave-search/*', 'context7/*', 'filesystem/*', 'firecrawl/*', 'git/*', 'sequential-thinking/*', 'supabase/*', 'tavily-remote/*', 'agent', 'todo']
 handoffs:
   - label: Start Implementation
     agent: Implementer

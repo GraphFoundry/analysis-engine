@@ -516,7 +516,7 @@ curl -X POST http://localhost:7000/simulate/scale \
 
 ### Prerequisites
 
-- Node.js >= 14.x
+- Node.js >= 18.x
 - Neo4j database (populated by `service-graph-engine`)
 
 ### Installation
@@ -661,6 +661,30 @@ Check `/health` endpoint for service count.
 # Test connection
 node verify-schema.js
 ```
+
+---
+
+## Copilot Integration
+
+This repository includes extensive GitHub Copilot customization for AI-assisted development:
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **Custom Agents** | `.github/agents/` | Planner, Implementer, Reviewer personas |
+| **Instruction Files** | `.github/instructions/` | Path-specific coding rules (6 files) |
+| **Agent Skills** | `.github/skills/` | Specialized knowledge modules (4 skills) |
+| **Prompt Templates** | `.github/prompts/` | Reusable workflow prompts (7 files) |
+
+**Key workflow:**
+1. Select **Planner** from agent dropdown → Describe your task
+2. Review the plan, ask questions
+3. Type `OK IMPLEMENT NOW` to approve
+4. Select **Implementer** → Execute the plan
+5. Select **Reviewer** → Validate changes
+
+For complete documentation, see:
+- [AGENTS.md](AGENTS.md) — Universal agent instructions
+- [docs/COPILOT-USAGE-GUIDE.md](docs/COPILOT-USAGE-GUIDE.md) — Detailed usage guide
 
 ---
 

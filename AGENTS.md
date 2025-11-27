@@ -123,6 +123,32 @@ PORT=3000
 │   ├── graph.js             # Graph API client
 │   ├── neo4j.js             # Neo4j read-only client + redaction
 │   └── validator.js         # Request validation
+├── .github/
+│   ├── copilot-instructions.md  # Master Copilot instruction file
+│   ├── agents/
+│   │   ├── planner.agent.md     # Plan-first workflow agent
+│   │   ├── implementer.agent.md # Code execution agent (requires approval)
+│   │   └── reviewer.agent.md    # Change validation agent
+│   ├── prompts/
+│   │   ├── 01-plan-change.prompt.md
+│   │   ├── 02-implement-approved-plan.prompt.md
+│   │   ├── 03-graph-api-consumer.prompt.md
+│   │   ├── 04-neo4j-fallback.prompt.md
+│   │   ├── 05-add-or-change-endpoint.prompt.md
+│   │   ├── 06-docs-update.prompt.md
+│   │   └── 07-pr-summary.prompt.md
+│   ├── instructions/
+│   │   ├── 00-operating-rules.instructions.md
+│   │   ├── 01-ownership-boundaries.instructions.md
+│   │   ├── 02-graph-api-first.instructions.md
+│   │   ├── 03-neo4j-readonly-fallback.instructions.md
+│   │   ├── 04-errors-logging-secrets.instructions.md
+│   │   └── 05-k8s-minikube-scope.instructions.md
+│   └── skills/
+│       ├── graph-api-client/SKILL.md
+│       ├── k8s-deployment/SKILL.md
+│       ├── neo4j-readonly/SKILL.md
+│       └── simulation-runner/SKILL.md
 ├── k8s/
 │   └── base/                # Kubernetes manifests
 ├── test/
@@ -145,8 +171,32 @@ PORT=3000
 ## Additional Context
 
 For detailed Copilot-specific rules, see:
-- `.github/copilot-instructions.md` — Master instruction file
-- `.github/agents/` — Custom agent personas (planner, implementer, reviewer)
-- `.github/instructions/` — Path-specific coding standards
+
+### Master Configuration
+- `.github/copilot-instructions.md` — Single source of truth for Copilot behavior
+
+### Agent Personas (select from dropdown in Chat)
+- `.github/agents/planner.agent.md` — Analyze, gather evidence, produce plans
+- `.github/agents/implementer.agent.md` — Execute approved plans (requires `OK IMPLEMENT NOW`)
+- `.github/agents/reviewer.agent.md` — Validate changes against rules
+
+### Path-Specific Instructions (auto-applied)
+- `.github/instructions/00-operating-rules.instructions.md` — Implementation lock, evidence requirements
+- `.github/instructions/01-ownership-boundaries.instructions.md` — What this repo owns
+- `.github/instructions/02-graph-api-first.instructions.md` — Graph API over Neo4j
+- `.github/instructions/03-neo4j-readonly-fallback.instructions.md` — Read-only Neo4j
+- `.github/instructions/04-errors-logging-secrets.instructions.md` — Security rules
+- `.github/instructions/05-k8s-minikube-scope.instructions.md` — K8s context
+
+### Agent Skills (auto-loaded based on context)
+- `.github/skills/neo4j-readonly/` — Safe Cypher query patterns
+- `.github/skills/graph-api-client/` — Graph API consumption patterns
+- `.github/skills/simulation-runner/` — Simulation logic patterns
+- `.github/skills/k8s-deployment/` — Kubernetes deployment patterns
+
+### Reusable Prompts (invoke with `/` in chat)
+- `.github/prompts/*.prompt.md` — 7 workflow templates
+
+> **Note:** Custom agents appear in the **agent dropdown** in Chat, not via `@` mentions.
 - `.github/prompts/` — Reusable task prompts
 - `.github/skills/` — Agent skills for specialized workflows

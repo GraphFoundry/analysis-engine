@@ -6,7 +6,7 @@ license: MIT
 
 # Neo4j Read-Only Query Skill
 
-This skill helps you write safe, read-only Neo4j queries for the what-if simulation engine.
+This skill helps you write safe, read-only Neo4j queries for the predictive analysis engine.
 
 ## When to Use This Skill
 

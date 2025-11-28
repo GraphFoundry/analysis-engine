@@ -1,7 +1,7 @@
 {
-  "name": "what-if-simulation-engine",
+  "name": "predictive-analysis-engine",
   "version": "1.0.0",
-  "description": "What-if simulation engine for microservice call graphs",
+  "description": "Predictive analysis engine for microservice call graphs",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
@@ -12,7 +12,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://gitlab.com/team-alpha-zero/research-adaptive-micro-service-management/what-if-simulation-engine.git"
+    "url": "git+https://gitlab.com/team-alpha-zero/research-adaptive-micro-service-management/predictive-analysis-engine.git"
   },
   "keywords": [
     "microservices",
@@ -23,9 +23,9 @@
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://gitlab.com/team-alpha-zero/research-adaptive-micro-service-management/what-if-simulation-engine/issues"
+    "url": "https://gitlab.com/team-alpha-zero/research-adaptive-micro-service-management/predictive-analysis-engine/issues"
   },
-  "homepage": "https://gitlab.com/team-alpha-zero/research-adaptive-micro-service-management/what-if-simulation-engine#readme",
+  "homepage": "https://gitlab.com/team-alpha-zero/research-adaptive-micro-service-management/predictive-analysis-engine#readme",
   "dependencies": {
     "dotenv": "^17.2.3",
     "express": "^4.22.1",

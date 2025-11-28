@@ -1,10 +1,10 @@
-# What-If Simulation Engine
+# Predictive Analysis Engine
 
 ## Overview
 
-The What-If Simulation Engine is a microservice observability tool that performs predictive impact analysis on service call graphs. It enables operators to simulate infrastructure changes—service failures and scaling operations—before executing them in production, thereby reducing risk and improving operational decision-making.
+The Predictive Analysis Engine is a microservice observability tool that performs predictive impact analysis on service call graphs. It enables operators to simulate infrastructure changes—service failures and scaling operations—before executing them in production, thereby reducing risk and improving operational decision-making.
 
-This service integrates with the existing Neo4j-based service graph infrastructure (populated by `service-graph-engine`) to provide real-time "what-if" analysis capabilities.
+This service integrates with the existing Neo4j-based service graph infrastructure (populated by `service-graph-engine`) to provide real-time predictive analysis capabilities.
 
 ## Architecture
 
@@ -25,7 +25,7 @@ This service integrates with the existing Neo4j-based service graph infrastructu
                                        │ READ-ONLY
                                        ▼
                             ┌──────────────────────┐
-                            │ what-if-simulation-  │
+                            │ predictive-analysis- │
                             │ engine               │
                             │ (This Service)       │
                             └──────────┬───────────┘
@@ -541,7 +541,7 @@ npm start
 **Output:**
 
 ```
-[2025-12-25T10:00:00.000Z] What-if Simulation Engine started
+[2025-12-25T10:00:00.000Z] Predictive Analysis Engine started
 Port: 7000
 Max traversal depth: 2
 Default latency metric: p95

@@ -1,12 +1,12 @@
 ---
 name: simulation-runner
-description: Guide for running and understanding what-if simulations. Use this when asked to simulate failures, scaling scenarios, or understand simulation logic.
+description: Guide for running and understanding predictive analysis simulations. Use this when asked to simulate failures, scaling scenarios, or understand simulation logic.
 license: MIT
 ---
 
 # Simulation Runner Skill
 
-This skill helps you work with the what-if simulation engine's core functionality — simulating failure and scaling scenarios for microservice architectures.
+This skill helps you work with the predictive analysis engine's core functionality — simulating failure and scaling scenarios for microservice architectures.
 
 ## When to Use This Skill
 

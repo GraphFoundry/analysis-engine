@@ -1,4 +1,4 @@
-# COPILOT MASTER INSTRUCTION — what-if-simulation-engine
+# COPILOT MASTER INSTRUCTION — predictive-analysis-engine
 
 **Purpose:** This is the single source of truth for how GitHub Copilot (and any Copilot "agent mode") must behave in this repository.
 
@@ -54,7 +54,7 @@ Copilot must assume the following are **NOT owned by this repo** (do not change 
 
 This repo owns:
 
-- what-if simulation logic
+- predictive analysis logic
 - its own HTTP API (endpoints exposed by this service)
 - client-side consumption of leader's Graph API
 - optional **read-only** Neo4j access as a fallback ONLY

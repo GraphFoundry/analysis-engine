@@ -1,14 +1,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: what-if-simulation-engine
+  name: predictive-analysis-engine
   labels:
-    app: what-if-simulation-engine
+    app: predictive-analysis-engine
     component: simulation
 spec:
   type: ClusterIP
   selector:
-    app: what-if-simulation-engine
+    app: predictive-analysis-engine
   ports:
     - name: http
       port: 7000

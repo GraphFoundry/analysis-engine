@@ -1,4 +1,4 @@
-# AGENTS.md — what-if-simulation-engine
+# AGENTS.md — predictive-analysis-engine
 
 This file provides universal agent instructions compatible with GitHub Copilot coding agent, OpenAI Codex, Claude, and any agent following the [openai/agents.md](https://github.com/openai/agents.md) standard.
 
@@ -6,7 +6,7 @@ This file provides universal agent instructions compatible with GitHub Copilot c
 
 ## Project Overview
 
-**What this is:** A what-if simulation engine for microservice call graphs. It analyzes microservice topologies and simulates failure/scaling scenarios to predict system behavior.
+**What this is:** A predictive analysis engine for microservice call graphs. It analyzes microservice topologies and simulates failure/scaling scenarios to predict system behavior.
 
 **Tech Stack:**
 - **Runtime:** Node.js (CommonJS)

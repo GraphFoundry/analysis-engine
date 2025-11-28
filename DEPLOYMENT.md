@@ -1,5 +1,18 @@
 # Deployment Guide
 
+## ⚠️ Breaking Change (v2.0)
+
+The Kubernetes resources have been renamed from `predictive-analysis-engine` to `predictive-analysis-engine`.
+
+**Migration steps:**
+1. Delete old resources: `kubectl delete deployment,svc predictive-analysis-engine`
+2. Apply new manifests: `kubectl apply -k k8s/base/`
+3. Update any clients/ingress referencing the old service name `predictive-analysis-engine`
+
+The service DNS name changes from `predictive-analysis-engine.<namespace>.svc.cluster.local` to `predictive-analysis-engine.<namespace>.svc.cluster.local`.
+
+---
+
 ## Local Demo (Current Phase)
 
 ### Prerequisites
@@ -29,7 +42,7 @@ npm start
 
 **Expected output:**
 ```
-[2025-12-27T10:00:00.000Z] What-if Simulation Engine started
+[2025-12-27T10:00:00.000Z] Predictive Analysis Engine started
 Port: 7000
 Max traversal depth: 2
 Default latency metric: p95
@@ -189,22 +202,22 @@ Kubernetes manifests are provided in `k8s/base/` for future in-cluster deploymen
 ### Build Container Image
 
 ```bash
-docker build -t what-if-simulation-engine:latest .
+docker build -t predictive-analysis-engine:latest .
 ```
 
 ### Load Image into Minikube
 
-The cluster cannot pull `what-if-simulation-engine:latest` from a registry—you must load it:
+The cluster cannot pull `predictive-analysis-engine:latest` from a registry—you must load it:
 
 **Option A (recommended):**
 ```bash
-minikube image load what-if-simulation-engine:latest
+minikube image load predictive-analysis-engine:latest
 ```
 
 **Option B (build inside minikube's Docker):**
 ```bash
 eval $(minikube docker-env)
-docker build -t what-if-simulation-engine:latest .
+docker build -t predictive-analysis-engine:latest .
 ```
 
 ### Deploy to Cluster
@@ -220,7 +233,7 @@ kubectl create secret generic neo4j-credentials \
 kubectl apply -k k8s/base/
 
 # Port-forward for local access (use 7001 to avoid host conflicts)
-kubectl port-forward svc/what-if-simulation-engine 7001:7000
+kubectl port-forward svc/predictive-analysis-engine 7001:7000
 ```
 
 Then test via `http://localhost:7001/health`.

@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: what-if-simulation-engine
+  name: predictive-analysis-engine
   labels:
-    app: what-if-simulation-engine
+    app: predictive-analysis-engine
     component: simulation
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: what-if-simulation-engine
+      app: predictive-analysis-engine
   template:
     metadata:
       labels:
-        app: what-if-simulation-engine
+        app: predictive-analysis-engine
         component: simulation
     spec:
       securityContext:
@@ -22,8 +22,8 @@ spec:
         runAsGroup: 1001
         fsGroup: 1001
       containers:
-        - name: what-if-simulation-engine
-          image: what-if-simulation-engine:latest
+        - name: predictive-analysis-engine
+          image: predictive-analysis-engine:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

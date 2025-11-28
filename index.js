@@ -222,7 +222,7 @@ app.post('/simulate/scale', async (req, res) => {
 
 // Start server
 const server = app.listen(config.server.port, () => {
-    console.log(`[${new Date().toISOString()}] What-if Simulation Engine started`);
+    console.log(`[${new Date().toISOString()}] Predictive Analysis Engine started`);
     console.log(`Port: ${config.server.port}`);
     console.log(`Max traversal depth: ${config.simulation.maxTraversalDepth}`);
     console.log(`Default latency metric: ${config.simulation.defaultLatencyMetric}`);

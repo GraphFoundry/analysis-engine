@@ -6,7 +6,7 @@ license: MIT
 
 # Graph API Client Skill
 
-This skill helps you consume the leader-owned Graph API service correctly in the what-if simulation engine.
+This skill helps you consume the leader-owned Graph API service correctly in the predictive analysis engine.
 
 ## When to Use This Skill
 

@@ -6,7 +6,7 @@ license: MIT
 
 # Kubernetes Deployment Skill
 
-This skill helps you work with Kubernetes deployments for the what-if simulation engine, specifically targeting Minikube for local development.
+This skill helps you work with Kubernetes deployments for the predictive analysis engine, specifically targeting Minikube for local development.
 
 ## When to Use This Skill
 
@@ -53,28 +53,28 @@ minikube start
 
 # Build image in Minikube's Docker
 eval $(minikube docker-env)
-docker build -t what-if-simulation-engine:local .
+docker build -t predictive-analysis-engine:local .
 
 # Apply manifests
 kubectl apply -k k8s/base/
 
 # Verify deployment
-kubectl get pods -l app=simulation-engine
-kubectl get svc simulation-engine
+kubectl get pods -l app=analysis-engine
+kubectl get svc analysis-engine
 ```
 
 ### Access the Service
 ```bash
 # Port forward for local access
-kubectl port-forward svc/simulation-engine 3000:3000
+kubectl port-forward svc/analysis-engine 3000:3000
 
 # Or use Minikube service
-minikube service simulation-engine --url
+minikube service analysis-engine --url
 ```
 
 ### View Logs
 ```bash
-kubectl logs -l app=simulation-engine -f
+kubectl logs -l app=analysis-engine -f
 ```
 
 ### Delete Deployment
@@ -89,22 +89,22 @@ kubectl delete -k k8s/base/
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: simulation-engine
+  name: analysis-engine
   labels:
-    app: simulation-engine
+    app: analysis-engine
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: simulation-engine
+      app: analysis-engine
   template:
     metadata:
       labels:
-        app: simulation-engine
+        app: analysis-engine
     spec:
       containers:
-      - name: simulation-engine
-        image: what-if-simulation-engine:local
+      - name: analysis-engine
+        image: predictive-analysis-engine:local
         imagePullPolicy: Never  # Use local image
         ports:
         - containerPort: 3000
@@ -154,10 +154,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: simulation-engine
+  name: analysis-engine
 spec:
   selector:
-    app: simulation-engine
+    app: analysis-engine
   ports:
   - port: 3000
     targetPort: 3000
@@ -192,7 +192,7 @@ resources:
   - service.yaml
 
 commonLabels:
-  app.kubernetes.io/name: simulation-engine
+  app.kubernetes.io/name: analysis-engine
   app.kubernetes.io/component: backend
 ```
 
@@ -201,7 +201,7 @@ commonLabels:
 ### Pod Not Starting
 ```bash
 # Check pod status
-kubectl describe pod -l app=simulation-engine
+kubectl describe pod -l app=analysis-engine
 
 # Check events
 kubectl get events --sort-by='.lastTimestamp'
@@ -220,10 +220,10 @@ kubectl exec -it <pod-name> -- env | grep NEO4J
 ```bash
 # Ensure using Minikube's Docker
 eval $(minikube docker-env)
-docker images | grep simulation-engine
+docker images | grep analysis-engine
 
 # Rebuild if needed
-docker build -t what-if-simulation-engine:local .
+docker build -t predictive-analysis-engine:local .
 ```
 
 ## Scope Limitations

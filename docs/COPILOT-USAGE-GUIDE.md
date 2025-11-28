@@ -1,4 +1,4 @@
-# Copilot Usage Guide — what-if-simulation-engine
+# Copilot Usage Guide — predictive-analysis-engine
 
 This guide explains how to use the custom agents in this repository with VS Code Copilot Chat, including normal chat sessions and Background Agents (Copilot CLI).
 

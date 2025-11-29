@@ -56,11 +56,20 @@ Copilot must check each item and report findings:
 
 ### 5. Scope Limitations
 
-- [ ] No CI/CD workflows added
-- [ ] No test automation added
+- [ ] No CI/CD workflows added (unless explicitly requested)
 - [ ] No drive-by refactors
+- [ ] No new test framework added without approval
 
-### 6. Graph API First Policy
+### 6. Testing & Documentation (per Testing Policy)
+
+- [ ] Tests added/updated for behavioral changes (or N/A for docs-only)
+- [ ] Tests pass (or pass criteria documented)
+- [ ] Relevant documentation updated
+- [ ] Governance files updated (if workflows/standards impacted)
+
+> See full Testing Policy in `.github/copilot-instructions.md`
+
+### 7. Graph API First Policy
 
 - [ ] Graph API is preferred over direct Neo4j access
 - [ ] Neo4j fallback is read-only and documented

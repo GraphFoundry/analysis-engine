@@ -73,6 +73,7 @@ Copilot should respond with:
 1. Step one
 2. Step two
 - Files: list of files
+- Test plan: what tests to add/update (or N/A for docs-only)
 - Risks: identified risks
 - Stop conditions: when to halt
 
@@ -83,6 +84,8 @@ Copilot should respond with:
 ## D) Waiting State
 Reply with `OK IMPLEMENT NOW` when ready.
 ```
+
+> **Testing:** For behavioral changes, include tests per Testing Policy in `.github/copilot-instructions.md`
 
 ---
 

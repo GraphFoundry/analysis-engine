@@ -80,7 +80,7 @@ Added POST /simulate/cascade endpoint for cascading failure simulation.
 - [x] Timeout pattern preserved
 - [x] Credential redaction used
 - [x] No CI/CD changes
-- [x] No test automation added
+- [x] Tests added/updated (per Testing Policy)
 - [x] Documentation updated
 ```
 
@@ -110,5 +110,5 @@ Include this checklist in the PR:
 - [ ] Error handling follows existing patterns
 - [ ] Documentation updated
 - [ ] No CI/CD changes
-- [ ] No test automation added
+- [ ] Tests added/updated (per Testing Policy in `.github/copilot-instructions.md`)
 ```

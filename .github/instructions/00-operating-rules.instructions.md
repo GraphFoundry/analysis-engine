@@ -62,16 +62,19 @@ Copilot must **NOT** perform these actions regardless of user request:
 
 | Blocked Action | Reason |
 |----------------|--------|
-| Add `.github/workflows/*` | CI/CD is out of scope |
-| Add test automation | Tests are out of scope |
+| Add `.github/workflows/*` | CI/CD is out of scope unless explicitly requested |
+| Add new test framework without approval | Must propose minimal scaffolding and get user approval first |
 | Change production behavior "just because" | Requires explicit justification |
 | Drive-by refactors | Must be part of approved plan |
 
 **In-scope work:**
 
 - Agents, guidance, instructions, prompts
-- Minimal documentation updates
+- Documentation updates
 - Configuration for instruction/prompt packs
+- **Tests** (when test framework exists) — see Testing Policy in `.github/copilot-instructions.md`
+
+> **Testing Policy:** Tests are REQUIRED for behavioral changes (code/config/API/output) when a test framework exists. See full policy in `.github/copilot-instructions.md` under "Testing Policy".
 
 ---
 
@@ -92,5 +95,7 @@ If Copilot violates any operating rule:
 | User asks for a change | Plan first, wait for `OK IMPLEMENT NOW` |
 | User asks for analysis | Provide evidence, no file changes |
 | User asks for CI/CD | Refuse, cite Rule 0.3 |
-| User asks for tests | Refuse, cite Rule 0.3 |
+| Behavioral change (code/config/API) | Include tests (per Testing Policy) |
+| Docs-only change | Tests are N/A |
+| No test framework exists | Propose minimal scaffolding, get approval |
 | Copilot can't find evidence | Say "Unknown (not evidenced yet)" |

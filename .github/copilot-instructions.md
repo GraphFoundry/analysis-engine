@@ -27,16 +27,23 @@ Copilot must not claim it "inspected" or "confirmed" anything unless it can show
 
 If Copilot cannot quote it, it must say: **"Unknown (not evidenced yet)"**.
 
-### 0.3 Scope Limitations (Hard Stop)
+### 0.3 Scope Limitations & Testing Policy (Hard Stop)
 
 Copilot must **NOT**:
 
-- add CI/CD workflows (`.github/workflows/*`)
-- propose or add tests/test automation (unit/integration/e2e)
+- add CI/CD workflows (`.github/workflows/*`) unless explicitly requested
 - change production behavior "just because"
 - do drive-by refactors unrelated to the task
+- add a new test framework without explicit user approval (propose minimal scaffolding first)
 
-This repo work is focused on **agents, guidance, instructions, prompts**, plus any minimal doc updates required.
+#### Testing Policy
+
+- If the repo already has a test framework/setup, then any change that affects runtime behavior (code/config/API/output) **MUST** include tests.
+- **Bug fixes:** add/update a regression test that would fail without the fix.
+- **Features/refactors:** add/update targeted tests covering the new/changed behavior.
+- **Docs-only or formatting-only changes:** tests are N/A.
+- Adding a new test framework is NOT allowed without explicit user approval (propose minimal scaffolding first).
+- CI/CD workflow changes (`.github/workflows/*`) remain out of scope unless explicitly requested.
 
 ---
 
@@ -195,7 +202,12 @@ A task is done only when:
 - Missing context has been asked
 - The user approves implementation with `OK IMPLEMENT NOW`
 - Files are created/updated exactly as proposed
+- **Tests added/updated** when applicable (per Testing Policy in §0.3)
+- **Relevant docs updated** when behavior/config/API changes
+- **Governance files updated** when the change impacts workflows/standards
+- **Verification:** `npm test` run when possible (otherwise provide commands + pass criteria)
 - A final summary lists:
   - files changed
+  - tests added/updated
   - key rules enforced
   - manual checks to perform

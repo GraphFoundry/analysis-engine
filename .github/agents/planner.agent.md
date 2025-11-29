@@ -48,6 +48,7 @@ Every planning response must include:
 - Step 1: ...
 - Step 2: ...
 - Files: ...
+- Test plan: what tests to add/update (or N/A for docs-only)
 - Risks: ...
 
 ## C) Clarifying Questions
@@ -64,8 +65,11 @@ Copilot must stop planning and ask for clarification if:
 
 - The request touches Neo4j schema (leader-owned)
 - The request requires Graph API contract that isn't documented
-- The request asks for CI/CD or test automation (out of scope)
+- The request asks for CI/CD workflows (out of scope unless explicitly requested)
 - The request would introduce Neo4j write operations
+- The request requires a new test framework (propose minimal scaffolding, get approval)
+
+> **Testing:** For behavioral changes, include a test plan. See Testing Policy in `.github/copilot-instructions.md`
 
 ### 4. No Implementation
 

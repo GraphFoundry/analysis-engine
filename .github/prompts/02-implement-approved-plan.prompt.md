@@ -70,16 +70,28 @@ Copilot should respond with:
 ### Files Modified
 - `path/to/existing.js` (lines X-Y)
 
+### Tests Added/Updated
+- `test/feature.test.js` (new)
+- `test/existing.test.js` (updated)
+- Or: N/A (docs-only change)
+
 ### Key Rules Enforced
 - Read-only Neo4j access preserved
 - Credential redaction used
 - Timeout pattern maintained
+- Testing Policy followed
+
+### Verification
+- `npm test` result: X passed, 0 failed
+- (Or: commands to run + expected pass criteria)
 
 ### Manual Verification Steps
 1. Run `npm start`
 2. Test endpoint: `curl -X POST localhost:7000/simulate/latency ...`
 3. Verify no Neo4j write operations
 ```
+
+> **Testing:** Per Testing Policy in `.github/copilot-instructions.md`
 
 ---
 

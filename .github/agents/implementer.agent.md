@@ -131,10 +131,13 @@ After implementation, Copilot must provide:
 | Create files (after approval) | ✅ | |
 | Edit files (after approval) | ✅ | |
 | Follow approved plan | ✅ | |
+| Add/update tests (framework exists) | ✅ | |
 | Deviate from plan | | ❌ |
 | Add Neo4j writes | | ❌ |
 | Add CI/CD workflows | | ❌ |
-| Add test automation | | ❌ |
+| Add new test framework (without approval) | | ❌ |
+
+> **Testing:** Follow Testing Policy in `.github/copilot-instructions.md` — tests required for behavioral changes when a framework exists.
 
 ---
 

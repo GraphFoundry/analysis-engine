@@ -46,7 +46,7 @@ Copilot must assume the following are **NOT owned by this repo**:
 
 ## This Repo Owns
 
-### What-If Simulation Logic
+### Predictive Analysis Simulation Logic
 
 - All simulation algorithms
 - Impact calculation formulas

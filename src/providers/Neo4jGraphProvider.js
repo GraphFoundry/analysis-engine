@@ -36,6 +36,13 @@ class Neo4jGraphProvider {
         // Add targetKey for consistency with GraphEngineHttpProvider
         // In Neo4j mode, keys are the same as input serviceId (namespace:name format)
         snapshot.targetKey = targetServiceId;
+        // Add dataFreshness for interface consistency with GraphEngineHttpProvider
+        snapshot.dataFreshness = {
+            source: 'neo4j',
+            stale: false,  // Neo4j is real-time, no staleness concept
+            lastUpdatedSecondsAgo: null,
+            windowMinutes: null
+        };
         return snapshot;
     }
 

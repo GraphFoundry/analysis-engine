@@ -23,6 +23,14 @@
  */
 
 /**
+ * @typedef {Object} DataFreshness
+ * @property {string} source - Data source ('graph-engine' | 'neo4j')
+ * @property {boolean} stale - Whether data is stale
+ * @property {number|null} lastUpdatedSecondsAgo - Seconds since last update
+ * @property {number|null} [windowMinutes] - Aggregation window (Graph Engine only)
+ */
+
+/**
  * @typedef {Object} GraphSnapshot
  * @property {Map<string, NodeData>} nodes - Map of serviceId to node data
  * @property {EdgeData[]} edges - Array of all edges
@@ -32,6 +40,7 @@
  *   In Neo4j mode: same as input serviceId (e.g., "default:checkoutservice").
  *   In Graph API mode: plain service name (e.g., "checkoutservice").
  *   Simulations should use this for all map lookups instead of request.serviceId.
+ * @property {DataFreshness} [dataFreshness] - Data freshness metadata for simulation responses
  */
 
 /**

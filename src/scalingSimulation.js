@@ -365,6 +365,10 @@ async function simulateScaling(request) {
         }
     }
     
+    // Determine data confidence based on staleness
+    const dataFreshness = snapshot.dataFreshness ?? null;
+    const confidence = dataFreshness?.stale ? 'low' : 'high';
+
     return {
         target: {
             serviceId: targetNode.serviceId,
@@ -378,6 +382,8 @@ async function simulateScaling(request) {
             depthUsed: maxDepth,
             generatedAt: new Date().toISOString()
         },
+        dataFreshness,
+        confidence,
         latencyMetric,
         scalingModel: { type: modelType, alpha },
         currentPods: request.currentPods,

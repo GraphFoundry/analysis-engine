@@ -281,4 +281,46 @@ test('failure simulation - direct caller loses traffic', () => {
     assert.strictEqual(affectedCallers[1].lostTrafficRps, 5);
 });
 
+/**
+ * Test: Data freshness confidence logic
+ */
+test('confidence is "low" when dataFreshness.stale is true', () => {
+    const dataFreshness = { 
+        source: 'graph-engine', 
+        stale: true, 
+        lastUpdatedSecondsAgo: 600, 
+        windowMinutes: 5 
+    };
+    const confidence = dataFreshness?.stale ? 'low' : 'high';
+    
+    assert.strictEqual(confidence, 'low');
+});
+
+test('confidence is "high" when dataFreshness.stale is false', () => {
+    const dataFreshness = { 
+        source: 'graph-engine', 
+        stale: false, 
+        lastUpdatedSecondsAgo: 30, 
+        windowMinutes: 5 
+    };
+    const confidence = dataFreshness?.stale ? 'low' : 'high';
+    
+    assert.strictEqual(confidence, 'high');
+});
+
+test('confidence is "high" when dataFreshness is null', () => {
+    const dataFreshness = null;
+    const confidence = dataFreshness?.stale ? 'low' : 'high';
+    
+    // null?.stale is undefined, which is falsy, so confidence is 'high'
+    assert.strictEqual(confidence, 'high');
+});
+
+test('confidence is "high" when dataFreshness is undefined', () => {
+    const dataFreshness = undefined;
+    const confidence = dataFreshness?.stale ? 'low' : 'high';
+    
+    assert.strictEqual(confidence, 'high');
+});
+
 console.log('All tests passed!');

@@ -114,6 +114,10 @@ async function simulateFailure(request) {
         if (criticalPathsToTarget.length >= config.simulation.maxPathsReturned) break;
     }
     
+    // Determine data confidence based on staleness
+    const dataFreshness = snapshot.dataFreshness ?? null;
+    const confidence = dataFreshness?.stale ? 'low' : 'high';
+
     return {
         target: {
             serviceId: targetNode.serviceId,
@@ -127,6 +131,8 @@ async function simulateFailure(request) {
             depthUsed: maxDepth,
             generatedAt: new Date().toISOString()
         },
+        dataFreshness,
+        confidence,
         affectedCallers,
         criticalPathsToTarget,
         totalLostTrafficRps: affectedCallers.reduce((sum, c) => sum + c.lostTrafficRps, 0)

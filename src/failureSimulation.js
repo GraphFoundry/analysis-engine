@@ -7,6 +7,167 @@ const config = require('./config');
  * @typedef {import('./providers/GraphDataProvider').GraphSnapshot} GraphSnapshot
  */
 
+// ============================================================================
+// Service ID Helpers (ensure canonical namespace:name format)
+// ============================================================================
+
+/**
+ * Parse a service reference into namespace and name
+ * Handles both "namespace:name" and plain "name" formats
+ * 
+ * @param {string} idOrName - Service ID or name
+ * @returns {{namespace: string, name: string}}
+ */
+function parseServiceRef(idOrName) {
+    if (!idOrName) return { namespace: 'default', name: '' };
+
+    const str = String(idOrName);
+    const colonIdx = str.indexOf(':');
+    
+    if (colonIdx > 0) {
+        return { 
+            namespace: str.slice(0, colonIdx) || 'default', 
+            name: str.slice(colonIdx + 1) || '' 
+        };
+    }
+    return { namespace: 'default', name: str };
+}
+
+/**
+ * Create canonical serviceId in "namespace:name" format
+ * 
+ * @param {string} namespace 
+ * @param {string} name 
+ * @returns {string}
+ */
+function toCanonicalServiceId(namespace, name) {
+    const ns = namespace || 'default';
+    return `${ns}:${name}`;
+}
+
+/**
+ * Convert a node to output reference with canonical serviceId
+ * 
+ * @param {Object|undefined} node - Node from snapshot
+ * @param {string} fallbackKey - Key to parse if node is missing
+ * @returns {{serviceId: string, name: string, namespace: string}}
+ */
+function nodeToOutRef(node, fallbackKey) {
+    const parsed = parseServiceRef(fallbackKey);
+    const name = node?.name ?? parsed.name;
+    const namespace = node?.namespace ?? parsed.namespace;
+    return {
+        serviceId: toCanonicalServiceId(namespace, name),
+        name,
+        namespace
+    };
+}
+
+// ============================================================================
+// Reachability Analysis Helpers
+// ============================================================================
+
+/**
+ * Find entrypoint nodes (nodes with no incoming edges within the snapshot)
+ * These are the "roots" from which we can traverse to find reachable nodes
+ * 
+ * @param {GraphSnapshot} snapshot 
+ * @param {string} blockedKey - Node to exclude (the failed target)
+ * @returns {string[]}
+ */
+function pickEntrypoints(snapshot, blockedKey) {
+    const keys = Array.from(snapshot.nodes.keys()).filter(k => k !== blockedKey);
+
+    // First choice: nodes with no incoming edges (within the neighborhood)
+    let entrypoints = keys.filter(k => (snapshot.incomingEdges.get(k)?.length || 0) === 0);
+
+    // Fallback: if neighborhood is truncated and has no "true roots", use all nodes except target
+    if (entrypoints.length === 0) entrypoints = keys;
+
+    return entrypoints;
+}
+
+/**
+ * BFS to find all nodes reachable from entrypoints, excluding blocked node
+ * 
+ * @param {GraphSnapshot} snapshot 
+ * @param {string[]} entrypoints - Starting nodes
+ * @param {string} blockedKey - Node to treat as removed
+ * @returns {Set<string>} - Set of reachable node keys
+ */
+function computeReachableNodes(snapshot, entrypoints, blockedKey) {
+    const visited = new Set();
+    const queue = [];
+
+    for (const e of entrypoints) {
+        if (!e || e === blockedKey) continue;
+        visited.add(e);
+        queue.push(e);
+    }
+
+    while (queue.length > 0) {
+        const cur = queue.shift();
+        const outs = snapshot.outgoingEdges.get(cur) || [];
+
+        for (const edge of outs) {
+            const nxt = edge.target;
+            if (!nxt || nxt === blockedKey) continue;
+            if (!snapshot.nodes.has(nxt)) continue;
+            if (visited.has(nxt)) continue;
+
+            visited.add(nxt);
+            queue.push(nxt);
+        }
+    }
+
+    return visited;
+}
+
+/**
+ * Estimate lost traffic for unreachable nodes.
+ * Splits loss into:
+ *  - lostFromTargetRps: traffic that used to come from the failed/blocked node
+ *  - lostFromReachableCutsRps: traffic from other reachable sources now cut off
+ *  - lostTotalRps: sum of both
+ * 
+ * @param {GraphSnapshot} snapshot 
+ * @param {Set<string>} reachableSet 
+ * @param {string} blockedKey 
+ * @returns {Map<string, {lostFromTargetRps: number, lostFromReachableCutsRps: number, lostTotalRps: number}>}
+ */
+function estimateBoundaryLostTraffic(snapshot, reachableSet, blockedKey) {
+    const unreachableKeys = Array.from(snapshot.nodes.keys())
+        .filter(k => k !== blockedKey && !reachableSet.has(k));
+
+    const lostByNode = new Map();
+
+    for (const nodeKey of unreachableKeys) {
+        const incoming = snapshot.incomingEdges.get(nodeKey) || [];
+
+        let lostFromTargetRps = 0;
+        let lostFromReachableCutsRps = 0;
+
+        for (const e of incoming) {
+            const rate = e.rate ?? 0;
+
+            if (e.source === blockedKey) {
+                lostFromTargetRps += rate;
+                continue;
+            }
+
+            if (reachableSet.has(e.source)) {
+                lostFromReachableCutsRps += rate;
+            }
+        }
+
+        const lostTotalRps = lostFromTargetRps + lostFromReachableCutsRps;
+
+        lostByNode.set(nodeKey, { lostFromTargetRps, lostFromReachableCutsRps, lostTotalRps });
+    }
+
+    return lostByNode;
+}
+
 /**
  * @typedef {Object} FailureSimulationRequest
  * @property {string} serviceId - Target service ID
@@ -68,6 +229,9 @@ async function simulateFailure(request) {
         throw new Error(`Service not found: ${request.serviceId}`);
     }
     
+    // Build canonical target reference
+    const targetOut = nodeToOutRef(targetNode, targetKey);
+    
     // Find all direct callers of target
     const directCallers = snapshot.incomingEdges.get(targetKey) || [];
     
@@ -76,10 +240,12 @@ async function simulateFailure(request) {
     for (const edge of directCallers) {
         const id = edge.source;
         const callerNode = snapshot.nodes.get(id);
+        const callerOut = nodeToOutRef(callerNode, id);
+        
         const prev = callerMap.get(id) || { 
-            serviceId: id, 
-            name: callerNode?.name ?? id.split(':')[1],
-            namespace: callerNode?.namespace ?? id.split(':')[0],
+            serviceId: callerOut.serviceId, 
+            name: callerOut.name,
+            namespace: callerOut.namespace,
             lostTrafficRps: 0, 
             edgeErrorRate: 0 
         };
@@ -114,18 +280,71 @@ async function simulateFailure(request) {
         if (criticalPathsToTarget.length >= config.simulation.maxPathsReturned) break;
     }
     
+    // ========================================================================
+    // Phase 3: Downstream and Unreachable Impact Analysis
+    // ========================================================================
+    
+    // Direct downstream dependents of target (services the target calls)
+    const directCallees = snapshot.outgoingEdges.get(targetKey) || [];
+    const downstreamMap = new Map();
+
+    for (const edge of directCallees) {
+        const calleeKey = edge.target;
+        if (!calleeKey || calleeKey === targetKey) continue;
+
+        const calleeNode = snapshot.nodes.get(calleeKey);
+        const calleeOut = nodeToOutRef(calleeNode, calleeKey);
+
+        const prev = downstreamMap.get(calleeKey) || {
+            serviceId: calleeOut.serviceId,
+            name: calleeOut.name,
+            namespace: calleeOut.namespace,
+            lostTrafficRps: 0,
+            edgeErrorRate: 0
+        };
+
+        prev.lostTrafficRps += edge.rate ?? 0;
+        prev.edgeErrorRate = Math.max(prev.edgeErrorRate, edge.errorRate ?? 0);
+
+        downstreamMap.set(calleeKey, prev);
+    }
+
+    const affectedDownstream = Array.from(downstreamMap.values())
+        .sort((a, b) => b.lostTrafficRps - a.lostTrafficRps);
+
+    // Compute reachability after "removing" the target
+    const entrypoints = pickEntrypoints(snapshot, targetKey);
+    const reachable = computeReachableNodes(snapshot, entrypoints, targetKey);
+    const lostByNode = estimateBoundaryLostTraffic(snapshot, reachable, targetKey);
+
+    const unreachableServices = Array.from(snapshot.nodes.keys())
+        .filter(k => k !== targetKey && !reachable.has(k))
+        .map(k => {
+            const n = snapshot.nodes.get(k);
+            const out = nodeToOutRef(n, k);
+            const loss = lostByNode.get(k) || { lostFromTargetRps: 0, lostFromReachableCutsRps: 0, lostTotalRps: 0 };
+            return {
+                ...out,
+                lostTrafficRps: loss.lostTotalRps,
+                lostFromTargetRps: loss.lostFromTargetRps,
+                lostFromReachableCutsRps: loss.lostFromReachableCutsRps
+            };
+        })
+        .sort((a, b) => b.lostTrafficRps - a.lostTrafficRps);
+    
     // Determine data confidence based on staleness
     const dataFreshness = snapshot.dataFreshness ?? null;
     const confidence = dataFreshness?.stale ? 'low' : 'high';
+    
+    // Build explanation for operators
+    const explanation = `If ${targetOut.name} fails, ${affectedCallers.length} upstream caller(s) lose direct access, ` +
+        `${affectedDownstream.length} downstream service(s) lose traffic from this target, ` +
+        `and ${unreachableServices.length} service(s) may become unreachable within the ${maxDepth}-hop neighborhood.`;
 
     return {
-        target: {
-            serviceId: targetNode.serviceId,
-            name: targetNode.name,
-            namespace: targetNode.namespace
-        },
+        target: targetOut,
         neighborhood: {
-            description: 'k-hop upstream subgraph around target (not full graph)',
+            description: 'k-hop neighborhood subgraph around target (not full graph)',
             serviceCount: snapshot.nodes.size,
             edgeCount: snapshot.edges.length,
             depthUsed: maxDepth,
@@ -133,12 +352,24 @@ async function simulateFailure(request) {
         },
         dataFreshness,
         confidence,
+        explanation,
         affectedCallers,
+        affectedDownstream,
+        unreachableServices,
         criticalPathsToTarget,
         totalLostTrafficRps: affectedCallers.reduce((sum, c) => sum + c.lostTrafficRps, 0)
     };
 }
 
 module.exports = {
-    simulateFailure
+    simulateFailure,
+    // Exported for unit testing
+    _test: {
+        parseServiceRef,
+        toCanonicalServiceId,
+        nodeToOutRef,
+        pickEntrypoints,
+        computeReachableNodes,
+        estimateBoundaryLostTraffic
+    }
 };

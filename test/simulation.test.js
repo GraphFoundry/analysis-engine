@@ -323,4 +323,174 @@ test('confidence is "high" when dataFreshness is undefined', () => {
     assert.strictEqual(confidence, 'high');
 });
 
+/**
+ * Test: Phase 3 - Service ID helpers
+ */
+const { _test: failureHelpers } = require('../src/failureSimulation');
+
+test('parseServiceRef - handles namespace:name format', () => {
+    const result = failureHelpers.parseServiceRef('production:frontend');
+    assert.strictEqual(result.namespace, 'production');
+    assert.strictEqual(result.name, 'frontend');
+});
+
+test('parseServiceRef - handles plain name format', () => {
+    const result = failureHelpers.parseServiceRef('checkoutservice');
+    assert.strictEqual(result.namespace, 'default');
+    assert.strictEqual(result.name, 'checkoutservice');
+});
+
+test('parseServiceRef - handles null/undefined', () => {
+    const result = failureHelpers.parseServiceRef(null);
+    assert.strictEqual(result.namespace, 'default');
+    assert.strictEqual(result.name, '');
+});
+
+test('toCanonicalServiceId - creates namespace:name format', () => {
+    const result = failureHelpers.toCanonicalServiceId('default', 'frontend');
+    assert.strictEqual(result, 'default:frontend');
+});
+
+test('nodeToOutRef - uses node values when present', () => {
+    const node = { serviceId: 'frontend', name: 'frontend', namespace: 'prod' };
+    const result = failureHelpers.nodeToOutRef(node, 'fallback');
+    assert.strictEqual(result.serviceId, 'prod:frontend');
+    assert.strictEqual(result.name, 'frontend');
+    assert.strictEqual(result.namespace, 'prod');
+});
+
+test('nodeToOutRef - falls back to parsing key when node is undefined', () => {
+    const result = failureHelpers.nodeToOutRef(undefined, 'staging:backend');
+    assert.strictEqual(result.serviceId, 'staging:backend');
+    assert.strictEqual(result.name, 'backend');
+    assert.strictEqual(result.namespace, 'staging');
+});
+
+/**
+ * Test: Phase 3 - Reachability analysis
+ */
+test('pickEntrypoints - finds nodes with no incoming edges', () => {
+    // Mock snapshot: A -> B -> C (A is entrypoint)
+    const snapshot = {
+        nodes: new Map([['A', {}], ['B', {}], ['C', {}]]),
+        incomingEdges: new Map([
+            ['A', []],
+            ['B', [{ source: 'A', target: 'B' }]],
+            ['C', [{ source: 'B', target: 'C' }]]
+        ])
+    };
+    
+    const entrypoints = failureHelpers.pickEntrypoints(snapshot, 'C');
+    assert.ok(entrypoints.includes('A'), 'A should be an entrypoint');
+    assert.ok(!entrypoints.includes('C'), 'C (blocked) should not be an entrypoint');
+});
+
+test('computeReachableNodes - traverses graph excluding blocked node', () => {
+    // Mock snapshot: A -> B -> C, B -> D
+    // If B is blocked, only A is reachable from A
+    const snapshot = {
+        nodes: new Map([['A', {}], ['B', {}], ['C', {}], ['D', {}]]),
+        outgoingEdges: new Map([
+            ['A', [{ source: 'A', target: 'B' }]],
+            ['B', [{ source: 'B', target: 'C' }, { source: 'B', target: 'D' }]],
+            ['C', []],
+            ['D', []]
+        ])
+    };
+    
+    const reachable = failureHelpers.computeReachableNodes(snapshot, ['A'], 'B');
+    
+    assert.ok(reachable.has('A'), 'A should be reachable');
+    assert.ok(!reachable.has('B'), 'B (blocked) should not be reachable');
+    assert.ok(!reachable.has('C'), 'C should not be reachable (behind blocked B)');
+    assert.ok(!reachable.has('D'), 'D should not be reachable (behind blocked B)');
+});
+
+test('computeReachableNodes - can reach nodes via alternate paths', () => {
+    // Mock snapshot: A -> B -> C, A -> C (alternate path)
+    // If B is blocked, C is still reachable via A -> C
+    const snapshot = {
+        nodes: new Map([['A', {}], ['B', {}], ['C', {}]]),
+        outgoingEdges: new Map([
+            ['A', [{ source: 'A', target: 'B' }, { source: 'A', target: 'C' }]],
+            ['B', [{ source: 'B', target: 'C' }]],
+            ['C', []]
+        ])
+    };
+    
+    const reachable = failureHelpers.computeReachableNodes(snapshot, ['A'], 'B');
+    
+    assert.ok(reachable.has('A'), 'A should be reachable');
+    assert.ok(!reachable.has('B'), 'B (blocked) should not be reachable');
+    assert.ok(reachable.has('C'), 'C should be reachable via alternate path A -> C');
+});
+
+test('estimateBoundaryLostTraffic - computes cut edge traffic', () => {
+    // Mock: A (reachable) -> B (unreachable), rate=100
+    const snapshot = {
+        nodes: new Map([['A', {}], ['B', {}], ['TARGET', {}]]),
+        incomingEdges: new Map([
+            ['A', []],
+            ['B', [{ source: 'A', target: 'B', rate: 100 }]],
+            ['TARGET', []]
+        ])
+    };
+    
+    const reachableSet = new Set(['A']);
+    const lostByNode = failureHelpers.estimateBoundaryLostTraffic(snapshot, reachableSet, 'TARGET');
+    
+    assert.deepStrictEqual(lostByNode.get('B'), {
+        lostFromTargetRps: 0,
+        lostFromReachableCutsRps: 100,
+        lostTotalRps: 100
+    }, 'B should have 100 RPS lost traffic from reachable cuts');
+});
+
+test('estimateBoundaryLostTraffic - splits traffic from blocked node vs reachable cuts', () => {
+    // Mock: TARGET -> B (rate=50), A -> B (rate=30)
+    // Now both are counted separately
+    const snapshot = {
+        nodes: new Map([['A', {}], ['B', {}], ['TARGET', {}]]),
+        incomingEdges: new Map([
+            ['A', []],
+            ['B', [
+                { source: 'TARGET', target: 'B', rate: 50 },
+                { source: 'A', target: 'B', rate: 30 }
+            ]],
+            ['TARGET', []]
+        ])
+    };
+    
+    const reachableSet = new Set(['A']);
+    const lostByNode = failureHelpers.estimateBoundaryLostTraffic(snapshot, reachableSet, 'TARGET');
+    
+    assert.deepStrictEqual(lostByNode.get('B'), {
+        lostFromTargetRps: 50,
+        lostFromReachableCutsRps: 30,
+        lostTotalRps: 80
+    }, 'B should have 50 from target + 30 from reachable cuts = 80 total');
+});
+
+test('estimateBoundaryLostTraffic - service with only target edge shows non-zero loss', () => {
+    // Critical test: B only has incoming edge from blocked TARGET
+    // This was previously returning 0, now should return the target's traffic
+    const snapshot = {
+        nodes: new Map([['A', {}], ['B', {}], ['TARGET', {}]]),
+        incomingEdges: new Map([
+            ['A', []],
+            ['B', [{ source: 'TARGET', target: 'B', rate: 75 }]],
+            ['TARGET', []]
+        ])
+    };
+    
+    const reachableSet = new Set(['A']);
+    const lostByNode = failureHelpers.estimateBoundaryLostTraffic(snapshot, reachableSet, 'TARGET');
+    
+    assert.deepStrictEqual(lostByNode.get('B'), {
+        lostFromTargetRps: 75,
+        lostFromReachableCutsRps: 0,
+        lostTotalRps: 75
+    }, 'B should have 75 RPS from target (was previously 0)');
+});
+
 console.log('All tests passed!');

@@ -1,0 +1,36 @@
+{
+  "description": "Sample ground truth data for evaluation (from chaos experiments or manual observation)",
+  "note": "These are example values - replace with actual measured data from chaos runs",
+  "scenarios": [
+    {
+      "scenarioId": "failure-checkout",
+      "actual": {
+        "affectedCallersCount": 1,
+        "totalLostTrafficRps": 45.5,
+        "unreachableCount": 0
+      }
+    },
+    {
+      "scenarioId": "failure-frontend",
+      "actual": {
+        "affectedCallersCount": 0,
+        "totalLostTrafficRps": 0,
+        "unreachableCount": 0
+      }
+    },
+    {
+      "scenarioId": "scaling-frontend-up",
+      "actual": {
+        "latencyDeltaMs": -12.5,
+        "affectedCallersCount": 0
+      }
+    },
+    {
+      "scenarioId": "scaling-checkout-down",
+      "actual": {
+        "latencyDeltaMs": 8.2,
+        "affectedCallersCount": 1
+      }
+    }
+  ]
+}

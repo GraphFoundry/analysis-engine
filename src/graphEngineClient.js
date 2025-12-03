@@ -151,10 +151,39 @@ async function getPeers(serviceName, direction) {
     return httpGet(url, config.graphApi.timeoutMs);
 }
 
+/**
+ * @typedef {Object} CentralityTopResult
+ * @property {string} metric - The centrality metric used
+ * @property {Array<{service: string, value: number}>} top - Top services by centrality
+ */
+
+/**
+ * Get top services by centrality metric
+ * @param {string} [metric='pagerank'] - Centrality metric (pagerank, betweenness)
+ * @param {number} [limit=5] - Number of top services to return
+ * @returns {Promise<ClientSuccess|ClientError>}
+ */
+async function getCentralityTop(metric = 'pagerank', limit = 5) {
+    if (!config.graphApi.enabled) {
+        return { ok: false, error: 'Graph API is disabled' };
+    }
+
+    // Validate metric to prevent injection
+    const validMetrics = ['pagerank', 'betweenness'];
+    if (!validMetrics.includes(metric)) {
+        return { ok: false, error: `Invalid metric: ${metric}. Allowed: ${validMetrics.join(', ')}` };
+    }
+
+    const baseUrl = normalizeBaseUrl(config.graphApi.baseUrl);
+    const url = `${baseUrl}/centrality/top?metric=${metric}&limit=${limit}`;
+    return httpGet(url, config.graphApi.timeoutMs);
+}
+
 module.exports = {
     checkGraphHealth,
     getNeighborhood,
     getPeers,
+    getCentralityTop,
     getBaseUrl,
     isEnabled,
     // Exported for testing

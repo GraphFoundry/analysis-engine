@@ -1,6 +1,14 @@
 require('dotenv').config();
 
 /**
+ * Check if running in graph-engine-only mode (no Neo4j at runtime)
+ * @returns {boolean}
+ */
+function isGraphEngineOnlyMode() {
+  return process.env.GRAPH_ENGINE_ONLY === 'true';
+}
+
+/**
  * Validate required environment variables at startup.
  * Fails fast with clear error messages before any connections are attempted.
  * 
@@ -9,8 +17,21 @@ require('dotenv').config();
  */
 function validateEnv() {
   const errors = [];
+  const graphEngineOnly = isGraphEngineOnlyMode();
   
-  if (process.env.USE_GRAPH_ENGINE_API === 'true') {
+  // In graph-engine-only mode, force Graph API usage
+  if (graphEngineOnly) {
+    if (process.env.USE_GRAPH_ENGINE_API !== 'true') {
+      console.warn('[WARN] GRAPH_ENGINE_ONLY=true implies USE_GRAPH_ENGINE_API=true. Forcing Graph API mode.');
+      process.env.USE_GRAPH_ENGINE_API = 'true';
+    }
+    
+    if (!process.env.GRAPH_ENGINE_BASE_URL && !process.env.SERVICE_GRAPH_ENGINE_URL) {
+      errors.push('GRAPH_ENGINE_BASE_URL (or SERVICE_GRAPH_ENGINE_URL) is required when GRAPH_ENGINE_ONLY=true');
+    }
+    
+    // No Neo4j vars required in this mode
+  } else if (process.env.USE_GRAPH_ENGINE_API === 'true') {
     // Graph API mode - require base URL
     if (!process.env.GRAPH_ENGINE_BASE_URL && !process.env.SERVICE_GRAPH_ENGINE_URL) {
       errors.push('GRAPH_ENGINE_BASE_URL (or SERVICE_GRAPH_ENGINE_URL) is required when USE_GRAPH_ENGINE_API=true');
@@ -29,7 +50,7 @@ function validateEnv() {
   if (errors.length > 0) {
     console.error('\n❌ Missing required environment variables:\n');
     errors.forEach(err => console.error(`   - ${err}`));
-    if (process.env.USE_GRAPH_ENGINE_API === 'true') {
+    if (graphEngineOnly || process.env.USE_GRAPH_ENGINE_API === 'true') {
       console.error('\n   Set GRAPH_ENGINE_BASE_URL to point to service-graph-engine.\n');
     } else {
       console.error('\n   Copy .env.example to .env and fill in your Neo4j credentials.\n');
@@ -98,11 +119,18 @@ const config = {
   },
   graphApi: {
     baseUrl: process.env.GRAPH_ENGINE_BASE_URL || process.env.SERVICE_GRAPH_ENGINE_URL || '',
-    enabled: process.env.USE_GRAPH_ENGINE_API === 'true',
+    enabled: process.env.USE_GRAPH_ENGINE_API === 'true' || process.env.GRAPH_ENGINE_ONLY === 'true',
     timeoutMs: parseInt(process.env.GRAPH_API_TIMEOUT_MS) || 5000,
-    required: process.env.REQUIRE_GRAPH_API === 'true'
+    required: process.env.REQUIRE_GRAPH_API === 'true',
+    // Strict mode: no Neo4j fallback at all
+    graphEngineOnly: process.env.GRAPH_ENGINE_ONLY === 'true'
+  },
+  rateLimit: {
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000,
+    maxRequests: parseInt(process.env.RATE_LIMIT_MAX) || 60
   }
 };
 
 module.exports = config;
 module.exports.validateEnv = validateEnv;
+module.exports.isGraphEngineOnlyMode = isGraphEngineOnlyMode;

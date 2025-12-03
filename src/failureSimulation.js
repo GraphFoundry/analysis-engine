@@ -1,5 +1,6 @@
 const { getProvider } = require('./providers');
 const { findTopPathsToTarget } = require('./pathAnalysis');
+const { generateFailureRecommendations } = require('./recommendations');
 const config = require('./config');
 
 /**
@@ -341,7 +342,8 @@ async function simulateFailure(request) {
         `${affectedDownstream.length} downstream service(s) lose traffic from this target, ` +
         `and ${unreachableServices.length} service(s) may become unreachable within the ${maxDepth}-hop neighborhood.`;
 
-    return {
+    // Build result object (without recommendations first)
+    const result = {
         target: targetOut,
         neighborhood: {
             description: 'k-hop neighborhood subgraph around target (not full graph)',
@@ -359,6 +361,11 @@ async function simulateFailure(request) {
         criticalPathsToTarget,
         totalLostTrafficRps: affectedCallers.reduce((sum, c) => sum + c.lostTrafficRps, 0)
     };
+
+    // Generate recommendations based on result
+    result.recommendations = generateFailureRecommendations(result);
+
+    return result;
 }
 
 module.exports = {

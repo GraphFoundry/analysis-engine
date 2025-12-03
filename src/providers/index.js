@@ -13,13 +13,25 @@ let _provider = null;
 /**
  * Get the configured graph data provider (singleton)
  * 
- * When USE_GRAPH_ENGINE_API=true, returns GraphEngineHttpProvider.
+ * When USE_GRAPH_ENGINE_API=true or GRAPH_ENGINE_ONLY=true, returns GraphEngineHttpProvider.
  * Otherwise, returns Neo4jGraphProvider (lazy-loads neo4j-driver).
+ * 
+ * In GRAPH_ENGINE_ONLY mode, Neo4j provider is never loaded.
  * 
  * @returns {import('./Neo4jGraphProvider').Neo4jGraphProvider | import('./GraphEngineHttpProvider').GraphEngineHttpProvider}
  */
 function getProvider() {
     if (_provider) {
+        return _provider;
+    }
+
+    // Graph Engine Only mode: strictly use HTTP provider, never load Neo4j
+    if (config.graphApi.graphEngineOnly) {
+        if (!config.graphApi.enabled) {
+            throw new Error('GRAPH_ENGINE_ONLY=true requires graph API to be enabled');
+        }
+        const { GraphEngineHttpProvider } = require('./GraphEngineHttpProvider');
+        _provider = new GraphEngineHttpProvider();
         return _provider;
     }
 

@@ -5,6 +5,9 @@ const { getProvider } = require('./src/providers');
 const { checkGraphHealth } = require('./src/graphEngineClient');
 const { simulateFailure } = require('./src/failureSimulation');
 const { simulateScaling } = require('./src/scalingSimulation');
+const { getTopRiskServices } = require('./src/riskAnalysis');
+const { correlationMiddleware } = require('./src/middleware/correlation');
+const { rateLimitMiddleware } = require('./src/middleware/rateLimit');
 const {
     parseServiceIdentifier,
     normalizePodParams,
@@ -19,6 +22,9 @@ validateEnv();
 
 const app = express();
 app.use(express.json());
+
+// Correlation ID middleware (generates UUID, sets X-Correlation-Id header, logs requests)
+app.use(correlationMiddleware());
 
 // Track server start time
 const startTime = Date.now();
@@ -99,6 +105,9 @@ app.get('/health', async (req, res) => {
     }
 });
 
+// Rate limiter for simulation endpoints
+const simulationRateLimiter = rateLimitMiddleware();
+
 /**
  * POST /simulate/failure
  * Simulate failure of a service and report impact
@@ -109,7 +118,7 @@ app.get('/health', async (req, res) => {
  * - namespace: string (optional, with name)
  * - maxDepth: number (optional, default from config)
  */
-app.post('/simulate/failure', async (req, res) => {
+app.post('/simulate/failure', simulationRateLimiter, async (req, res) => {
     try {
         // Validate and parse request
         const identifier = parseServiceIdentifier(req.body);
@@ -166,7 +175,7 @@ app.post('/simulate/failure', async (req, res) => {
  * - model: object (optional, { type: 'bounded_sqrt', alpha: 0.5 })
  * - maxDepth: number (optional, default from config)
  */
-app.post('/simulate/scale', async (req, res) => {
+app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
     try {
         // Validate and parse request
         const identifier = parseServiceIdentifier(req.body);
@@ -215,6 +224,34 @@ app.post('/simulate/scale', async (req, res) => {
             res.status(400).json({ error: error.message });
         } else {
             console.error('Simulation error:', error);
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    }
+});
+
+/**
+ * GET /risk/services/top
+ * Get top services by risk (based on centrality metrics)
+ * 
+ * Query params:
+ * - metric: string (optional, 'pagerank' or 'betweenness', default: 'pagerank')
+ * - limit: number (optional, 1-20, default: 5)
+ */
+app.get('/risk/services/top', async (req, res) => {
+    try {
+        const metric = req.query.metric || 'pagerank';
+        const limit = Math.min(Math.max(parseInt(req.query.limit) || 5, 1), 20);
+        
+        const result = await getTopRiskServices({ metric, limit });
+        
+        res.json(result);
+    } catch (error) {
+        if (error.message.includes('Invalid metric')) {
+            res.status(400).json({ error: error.message });
+        } else if (error.message.includes('disabled')) {
+            res.status(503).json({ error: 'Graph API is not enabled' });
+        } else {
+            console.error('Risk analysis error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
     }

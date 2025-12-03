@@ -1,0 +1,42 @@
+{
+  "description": "Sample scenarios for evaluation harness",
+  "scenarios": [
+    {
+      "id": "failure-checkout",
+      "type": "failure",
+      "params": {
+        "serviceId": "checkoutservice",
+        "maxDepth": 2
+      }
+    },
+    {
+      "id": "failure-frontend",
+      "type": "failure",
+      "params": {
+        "name": "frontend",
+        "namespace": "default",
+        "maxDepth": 1
+      }
+    },
+    {
+      "id": "scaling-frontend-up",
+      "type": "scaling",
+      "params": {
+        "serviceId": "frontend",
+        "currentPods": 2,
+        "newPods": 4,
+        "latencyMetric": "p95"
+      }
+    },
+    {
+      "id": "scaling-checkout-down",
+      "type": "scaling",
+      "params": {
+        "name": "checkoutservice",
+        "namespace": "default",
+        "currentPods": 4,
+        "newPods": 2
+      }
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 const { getProvider } = require('./providers');
 const { findTopPathsToTarget } = require('./pathAnalysis');
+const { generateScalingRecommendations } = require('./recommendations');
 const config = require('./config');
 
 /**
@@ -369,7 +370,8 @@ async function simulateScaling(request) {
     const dataFreshness = snapshot.dataFreshness ?? null;
     const confidence = dataFreshness?.stale ? 'low' : 'high';
 
-    return {
+    // Build result object (without recommendations first)
+    const result = {
         target: {
             serviceId: targetNode.serviceId,
             name: targetNode.name,
@@ -403,6 +405,11 @@ async function simulateScaling(request) {
         },
         affectedPaths
     };
+
+    // Generate recommendations based on result
+    result.recommendations = generateScalingRecommendations(result);
+
+    return result;
 }
 
 module.exports = {

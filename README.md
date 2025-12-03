@@ -80,6 +80,11 @@ All configuration is managed via environment variables with sensible defaults.
 | `TIMEOUT_MS` | `8000` | Query and request timeout (ms) |
 | `MAX_PATHS_RETURNED` | `10` | Maximum paths in simulation results |
 | `PORT` | `7000` | HTTP server port |
+| `SERVICE_GRAPH_ENGINE_URL` | `http://localhost:3000` | Graph Engine API base URL |
+| `USE_GRAPH_ENGINE_API` | `true` | Enable Graph Engine API (preferred over Neo4j) |
+| `GRAPH_ENGINE_ONLY` | `false` | Strict mode: only use Graph Engine, no Neo4j fallback |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit sliding window (ms) |
+| `RATE_LIMIT_MAX_REQUESTS` | `60` | Max requests per window per client |
 
 **Setup:**
 
@@ -324,6 +329,221 @@ curl -X POST http://localhost:7000/simulate/scale \
     "newPods": 6
   }'
 ```
+
+---
+
+### Risk Analysis
+
+**Endpoint:** `GET /risk/services/top`
+
+Returns the top services by centrality-based risk score. Services with higher centrality (PageRank or betweenness) are at higher risk of causing cascading failures.
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `metric` | string | `pagerank` | Centrality metric (`pagerank` or `betweenness`) |
+| `limit` | number | `5` | Number of services to return (1-20) |
+
+**Response:**
+
+```json
+{
+  "metric": "pagerank",
+  "services": [
+    {
+      "serviceId": "default:frontend",
+      "name": "frontend",
+      "score": 0.2847,
+      "riskLevel": "high",
+      "explanation": "frontend has high PageRank (0.2847), indicating it is a critical hub. Failure could cascade widely."
+    },
+    {
+      "serviceId": "default:checkoutservice",
+      "name": "checkoutservice",
+      "score": 0.1523,
+      "riskLevel": "medium",
+      "explanation": "checkoutservice has moderate PageRank (0.1523). Monitor for dependencies."
+    }
+  ],
+  "generatedAt": "2025-12-29T10:00:00.000Z"
+}
+```
+
+**Response Fields:**
+
+- `metric`: Centrality metric used for ranking
+- `services`: Top N services by centrality score, each with:
+  - `riskLevel`: `high` (top 20%), `medium` (20-50%), or `low` (bottom 50%)
+  - `explanation`: Human-readable risk explanation
+- `generatedAt`: Timestamp of analysis
+
+**Example:**
+
+```bash
+curl "http://localhost:7000/risk/services/top?metric=pagerank&limit=10"
+```
+
+---
+
+### Recommendations in Simulation Responses
+
+Both failure and scaling simulation responses now include actionable recommendations:
+
+**Failure Simulation Response (new field):**
+```json
+{
+  "target": { ... },
+  "affectedCallers": [ ... ],
+  "recommendations": [
+    {
+      "type": "circuit-breaker",
+      "priority": "high",
+      "message": "Consider implementing circuit breakers for callers losing >50 RPS."
+    },
+    {
+      "type": "redundancy",
+      "priority": "medium", 
+      "message": "3 callers depend on this service. Consider deploying replicas or fallback endpoints."
+    }
+  ]
+}
+```
+
+**Scaling Simulation Response (new field):**
+```json
+{
+  "target": { ... },
+  "latencyEstimate": { ... },
+  "recommendations": [
+    {
+      "type": "scaling-benefit",
+      "priority": "medium",
+      "message": "Scaling from 2 to 4 pods shows >30% latency improvement. Proceed if cost-effective."
+    }
+  ]
+}
+```
+
+**Recommendation Types:**
+
+| Type | Applies To | Description |
+|------|-----------|-------------|
+| `data-quality-warning` | Both | Low confidence due to stale/missing data |
+| `circuit-breaker` | Failure | High traffic loss suggests circuit breakers |
+| `redundancy` | Failure | Multiple callers suggest replication |
+| `topology-review` | Failure | Unreachable services detected |
+| `monitoring` | Failure | Low impact, but monitor affected callers |
+| `scaling-caution` | Scale | Scaling down increases latency significantly |
+| `scaling-benefit` | Scale | Scaling up provides >30% improvement |
+| `cost-efficiency` | Scale | Minimal benefit, may not justify cost |
+| `propagation-awareness` | Scale | Callers will see latency changes |
+| `proceed` | Scale | No significant impact detected |
+
+---
+
+## Operational Features
+
+### Correlation ID
+
+All requests are assigned a unique correlation ID for distributed tracing:
+
+- **Header:** `X-Correlation-Id`
+- If provided in the request, it is preserved; otherwise, a UUID is generated
+- All log entries include the correlation ID for request tracing
+
+**Example:**
+```bash
+curl -H "X-Correlation-Id: my-trace-123" http://localhost:7000/health
+# Response includes: X-Correlation-Id: my-trace-123
+```
+
+### Rate Limiting
+
+Simulation endpoints (`POST /simulate/*`) are rate-limited to prevent abuse:
+
+- **Default:** 60 requests per minute per client IP
+- **Headers returned:**
+  - `X-RateLimit-Limit`: Maximum requests per window
+  - `X-RateLimit-Remaining`: Remaining requests in current window
+  - `X-RateLimit-Reset`: Unix timestamp when window resets
+
+**Rate Limit Exceeded (HTTP 429):**
+```json
+{
+  "error": "Too many requests",
+  "retryAfterMs": 45000
+}
+```
+
+### Structured Logging
+
+All logs are output in JSON format for easy parsing:
+
+```json
+{
+  "timestamp": "2025-12-29T10:00:00.000Z",
+  "level": "info",
+  "message": "request_start",
+  "correlationId": "abc-123",
+  "method": "POST",
+  "path": "/simulate/failure"
+}
+```
+
+### Graph-Engine-Only Mode
+
+For deployments that exclusively use the Graph Engine API (no Neo4j):
+
+```bash
+GRAPH_ENGINE_ONLY=true
+USE_GRAPH_ENGINE_API=true
+SERVICE_GRAPH_ENGINE_URL=http://graph-engine:3000
+```
+
+In this mode:
+- Neo4j credentials are not required
+- Application fails fast if Graph Engine is unavailable
+- No fallback to Neo4j
+
+---
+
+## Evaluation Harness
+
+CLI tools for evaluating simulation accuracy against ground truth:
+
+### Run Scenarios
+
+```bash
+node tools/eval/run.js \
+  --scenarios tools/eval/scenarios.sample.json \
+  --output predictions.json \
+  --base-url http://localhost:7000
+```
+
+**Scenario Format:**
+```json
+[
+  {
+    "id": "scenario-1",
+    "type": "failure",
+    "request": { "serviceId": "default:frontend" }
+  }
+]
+```
+
+### Score Predictions
+
+```bash
+node tools/eval/score.js \
+  --predictions predictions.json \
+  --ground-truth tools/eval/groundTruth.sample.json
+```
+
+**Metrics Computed:**
+- **MAE** (Mean Absolute Error)
+- **MAPE** (Mean Absolute Percentage Error)
+- **Spearman ρ** (rank correlation, if N ≥ 2)
 
 ---
 

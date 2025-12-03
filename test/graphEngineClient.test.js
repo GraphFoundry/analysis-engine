@@ -256,3 +256,106 @@ describe('URL normalization', () => {
         assert.strictEqual(_normalizeBaseUrl('https://api.example.com/'), 'https://api.example.com');
     });
 });
+
+describe('getCentralityTop', () => {
+    let mockServer;
+
+    afterEach(async () => {
+        if (mockServer) {
+            await closeMockServer(mockServer);
+            mockServer = null;
+        }
+        // Restore env
+        Object.keys(process.env).forEach(key => {
+            if (!(key in originalEnv)) delete process.env[key];
+        });
+        Object.assign(process.env, originalEnv);
+        delete require.cache[require.resolve('../src/config')];
+        delete require.cache[require.resolve('../src/graphEngineClient')];
+    });
+
+    test('returns error when graph API is disabled', async () => {
+        delete require.cache[require.resolve('../src/config')];
+        delete require.cache[require.resolve('../src/graphEngineClient')];
+        process.env.USE_GRAPH_ENGINE_API = 'false';
+        
+        const { getCentralityTop } = require('../src/graphEngineClient');
+        const result = await getCentralityTop('pagerank', 5);
+        
+        assert.strictEqual(result.ok, false);
+        assert.ok(result.error.includes('disabled'));
+    });
+
+    test('returns error for invalid metric', async () => {
+        const mock = await createMockServer((req, res) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ metric: 'pagerank', top: [] }));
+        });
+        mockServer = mock.server;
+
+        delete require.cache[require.resolve('../src/config')];
+        delete require.cache[require.resolve('../src/graphEngineClient')];
+        process.env.USE_GRAPH_ENGINE_API = 'true';
+        process.env.GRAPH_ENGINE_BASE_URL = mock.url;
+        
+        const { getCentralityTop } = require('../src/graphEngineClient');
+        const result = await getCentralityTop('invalid_metric', 5);
+        
+        assert.strictEqual(result.ok, false);
+        assert.ok(result.error.includes('Invalid metric'));
+    });
+
+    test('returns top services on success', async () => {
+        const responseData = {
+            metric: 'pagerank',
+            top: [
+                { service: 'frontend', value: 0.35 },
+                { service: 'checkoutservice', value: 0.28 }
+            ]
+        };
+
+        const mock = await createMockServer((req, res) => {
+            assert.ok(req.url.includes('/centrality/top'));
+            assert.ok(req.url.includes('metric=pagerank'));
+            assert.ok(req.url.includes('limit=5'));
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(responseData));
+        });
+        mockServer = mock.server;
+
+        delete require.cache[require.resolve('../src/config')];
+        delete require.cache[require.resolve('../src/graphEngineClient')];
+        process.env.USE_GRAPH_ENGINE_API = 'true';
+        process.env.GRAPH_ENGINE_BASE_URL = mock.url;
+        
+        const { getCentralityTop } = require('../src/graphEngineClient');
+        const result = await getCentralityTop('pagerank', 5);
+        
+        assert.strictEqual(result.ok, true);
+        assert.strictEqual(result.data.metric, 'pagerank');
+        assert.strictEqual(result.data.top.length, 2);
+        assert.strictEqual(result.data.top[0].service, 'frontend');
+    });
+
+    test('accepts betweenness metric', async () => {
+        const responseData = { metric: 'betweenness', top: [] };
+
+        const mock = await createMockServer((req, res) => {
+            assert.ok(req.url.includes('metric=betweenness'));
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(responseData));
+        });
+        mockServer = mock.server;
+
+        delete require.cache[require.resolve('../src/config')];
+        delete require.cache[require.resolve('../src/graphEngineClient')];
+        process.env.USE_GRAPH_ENGINE_API = 'true';
+        process.env.GRAPH_ENGINE_BASE_URL = mock.url;
+        
+        const { getCentralityTop } = require('../src/graphEngineClient');
+        const result = await getCentralityTop('betweenness', 3);
+        
+        assert.strictEqual(result.ok, true);
+        assert.strictEqual(result.data.metric, 'betweenness');
+    });
+});

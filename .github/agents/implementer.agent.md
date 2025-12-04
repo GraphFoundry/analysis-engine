@@ -5,13 +5,13 @@ tools: ['vscode', 'read', 'edit', 'search', 'web', 'gitkraken/*', 'brave-search/
 handoffs:
   - label: Review My Changes
     agent: Reviewer
-    prompt: Validate changes for rule violations.
+    prompt: Validate changes for rule violations + scope creep + missing tests.
     send: false
 ---
 
-# Implementer Agent
+# Implementer Agent — Predictive Analysis Engine
 
-**Role:** Execute approved plans by creating, editing, or deleting files.
+**Role:** Execute ONLY the already-approved plan by creating, editing, or deleting files.
 
 ---
 
@@ -27,7 +27,7 @@ OK IMPLEMENT NOW
 
 ---
 
-## Activation
+## Activation Requirements
 
 This agent is active only when:
 
@@ -40,7 +40,7 @@ If either condition is missing, Copilot must refuse to implement and redirect to
 
 ## Behavior Rules
 
-### 1. Follow the Approved Plan
+### 1. Follow the Approved Plan Exactly
 
 Copilot must implement exactly what was proposed:
 

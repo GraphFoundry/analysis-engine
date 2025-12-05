@@ -1,0 +1,826 @@
+openapi: 3.0.3
+info:
+  title: Predictive Analysis Engine API
+  description: |
+    API for simulating failure and scaling scenarios in microservice call graphs.
+    
+    **Data Sources:**
+    - Primary: Graph API (service-graph-engine)
+    - Fallback: Neo4j (read-only)
+    
+    **Note:** Swagger UI is disabled by default. Set `ENABLE_SWAGGER=true` to enable.
+  version: 1.0.0
+  contact:
+    name: Team Alpha Zero
+  license:
+    name: ISC
+
+servers:
+  - url: http://localhost:7000
+    description: Local development server
+
+tags:
+  - name: Health
+    description: Health check and connectivity status
+  - name: Simulation
+    description: Failure and scaling simulation endpoints
+  - name: Risk
+    description: Risk analysis and centrality-based scoring
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check endpoint
+      description: Returns data source connectivity status and configuration info
+      operationId: getHealth
+      responses:
+        '200':
+          description: Health status response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: ok
+                dataSource: graph-api
+                provider:
+                  connected: true
+                  services: 12
+                  stale: false
+                  error: null
+                graphApi:
+                  enabled: true
+                  available: true
+                  status: ok
+                  stale: false
+                  lastUpdatedSecondsAgo: 45
+                  baseUrl: http://service-graph-engine:8080
+                  timeoutMs: 5000
+                config:
+                  maxTraversalDepth: 2
+                  defaultLatencyMetric: p95
+                  graphApiEnabled: true
+                uptimeSeconds: 123.4
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                error: Connection failed
+
+  /simulate/failure:
+    post:
+      tags:
+        - Simulation
+      summary: Simulate service failure
+      description: |
+        Simulate failure of a service and report the impact on upstream callers,
+        downstream dependents, and potentially unreachable services.
+      operationId: simulateFailure
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FailureSimulationRequest'
+            examples:
+              byServiceId:
+                summary: Using serviceId
+                value:
+                  serviceId: "default:frontend"
+                  maxDepth: 2
+              byNameNamespace:
+                summary: Using name and namespace
+                value:
+                  name: frontend
+                  namespace: default
+                  maxDepth: 2
+      responses:
+        '200':
+          description: Failure simulation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FailureSimulationResponse'
+              example:
+                target:
+                  serviceId: "default:frontend"
+                  name: frontend
+                  namespace: default
+                neighborhood:
+                  description: "k-hop neighborhood subgraph around target (not full graph)"
+                  serviceCount: 8
+                  edgeCount: 12
+                  depthUsed: 2
+                  generatedAt: "2024-01-15T10:30:00.000Z"
+                dataFreshness:
+                  source: graph-engine
+                  stale: false
+                  lastUpdatedSecondsAgo: 30
+                  windowMinutes: 5
+                confidence: high
+                explanation: "If frontend fails, 3 upstream caller(s) lose direct access, 2 downstream service(s) lose traffic from this target, and 1 service(s) may become unreachable within the 2-hop neighborhood."
+                affectedCallers:
+                  - serviceId: "default:loadgenerator"
+                    name: loadgenerator
+                    namespace: default
+                    lostTrafficRps: 150.5
+                    edgeErrorRate: 0.02
+                affectedDownstream:
+                  - serviceId: "default:cartservice"
+                    name: cartservice
+                    namespace: default
+                    lostTrafficRps: 100.0
+                    edgeErrorRate: 0.01
+                unreachableServices: []
+                criticalPathsToTarget:
+                  - path: ["default:loadgenerator", "default:frontend"]
+                    pathRps: 150.5
+                totalLostTrafficRps: 150.5
+                recommendations:
+                  - type: add_retry
+                    priority: high
+                    description: "Add retry logic for high-traffic callers"
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "serviceId or (name + namespace) must be provided"
+        '404':
+          description: Service not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Service 'unknown-service' not found in graph"
+        '503':
+          description: Data source unavailable or stale
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Graph data is stale (last update: 600s ago). Simulation results may be inaccurate."
+        '504':
+          description: Simulation timeout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Simulation timeout exceeded"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Internal server error"
+
+  /simulate/scale:
+    post:
+      tags:
+        - Simulation
+      summary: Simulate service scaling
+      description: |
+        Simulate scaling a service (changing pod count) and report the latency impact
+        on upstream callers and critical paths.
+      operationId: simulateScale
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScalingSimulationRequest'
+            examples:
+              scaleUp:
+                summary: Scale up from 2 to 4 pods
+                value:
+                  serviceId: "default:cartservice"
+                  currentPods: 2
+                  newPods: 4
+                  latencyMetric: p95
+                  maxDepth: 2
+              withModel:
+                summary: With custom scaling model
+                value:
+                  name: cartservice
+                  namespace: default
+                  currentPods: 2
+                  targetPods: 6
+                  latencyMetric: p99
+                  model:
+                    type: bounded_sqrt
+                    alpha: 0.3
+                  maxDepth: 2
+      responses:
+        '200':
+          description: Scaling simulation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScalingSimulationResponse'
+              example:
+                target:
+                  serviceId: "default:cartservice"
+                  name: cartservice
+                  namespace: default
+                neighborhood:
+                  description: "k-hop upstream subgraph around target (not full graph)"
+                  serviceCount: 5
+                  edgeCount: 8
+                  depthUsed: 2
+                  generatedAt: "2024-01-15T10:30:00.000Z"
+                dataFreshness:
+                  source: graph-engine
+                  stale: false
+                  lastUpdatedSecondsAgo: 30
+                  windowMinutes: 5
+                confidence: high
+                latencyMetric: p95
+                scalingModel:
+                  type: bounded_sqrt
+                  alpha: 0.5
+                currentPods: 2
+                newPods: 4
+                latencyEstimate:
+                  description: "Rate-weighted mean of incoming edge latency to target"
+                  baselineMs: 120.5
+                  projectedMs: 85.2
+                  deltaMs: -35.3
+                  unit: milliseconds
+                affectedCallers:
+                  description: "Edge-level impact: deltaMs is change in this caller's direct outgoing edge latency. endToEndDeltaMs is cumulative path latency change."
+                  items:
+                    - serviceId: "default:frontend"
+                      name: frontend
+                      namespace: default
+                      hopDistance: 1
+                      beforeMs: 120.5
+                      afterMs: 85.2
+                      deltaMs: -35.3
+                      endToEndBeforeMs: 120.5
+                      endToEndAfterMs: 85.2
+                      endToEndDeltaMs: -35.3
+                      viaPath: ["default:frontend", "default:cartservice"]
+                affectedPaths:
+                  - path: ["default:frontend", "default:cartservice"]
+                    pathRps: 100.0
+                    beforeMs: 120.5
+                    afterMs: 85.2
+                    deltaMs: -35.3
+                    incompleteData: false
+                recommendations:
+                  - type: scale_complete
+                    priority: medium
+                    description: "Scaling will improve latency by ~29%"
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "currentPods must be a positive integer"
+        '404':
+          description: Service not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Service 'unknown-service' not found in graph"
+        '503':
+          description: Data source unavailable or stale
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '504':
+          description: Simulation timeout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /risk/services/top:
+    get:
+      tags:
+        - Risk
+      summary: Get top risk services
+      description: |
+        Get services ranked by risk based on centrality metrics (PageRank or betweenness).
+        Higher centrality = higher risk if the service fails.
+      operationId: getTopRiskServices
+      parameters:
+        - name: metric
+          in: query
+          description: Centrality metric to use for ranking
+          required: false
+          schema:
+            type: string
+            enum:
+              - pagerank
+              - betweenness
+            default: pagerank
+        - name: limit
+          in: query
+          description: Number of services to return (1-20)
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 5
+      responses:
+        '200':
+          description: Top risk services
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskAnalysisResponse'
+              example:
+                metric: pagerank
+                services:
+                  - serviceId: "default:frontend"
+                    name: frontend
+                    namespace: default
+                    centralityScore: 0.2534
+                    riskLevel: high
+                    explanation: "frontend has high PageRank (0.2534), indicating it is a critical hub. Failure could cascade widely."
+                  - serviceId: "default:cartservice"
+                    name: cartservice
+                    namespace: default
+                    centralityScore: 0.1823
+                    riskLevel: medium
+                    explanation: "cartservice has moderate PageRank (0.1823). Monitor for dependencies."
+                dataFreshness:
+                  source: graph-engine
+                  stale: false
+                  lastUpdatedSecondsAgo: 30
+                  windowMinutes: 5
+                confidence: high
+        '400':
+          description: Invalid metric parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Invalid metric: invalid. Allowed: pagerank, betweenness"
+        '503':
+          description: Graph API not enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Graph API is not enabled"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Error message
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, error]
+        dataSource:
+          type: string
+          enum: [graph-api, neo4j]
+        provider:
+          type: object
+          properties:
+            connected:
+              type: boolean
+            services:
+              type: integer
+            stale:
+              type: boolean
+            error:
+              type: string
+              nullable: true
+        graphApi:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            available:
+              type: boolean
+            status:
+              type: string
+            stale:
+              type: boolean
+            lastUpdatedSecondsAgo:
+              type: number
+            baseUrl:
+              type: string
+            timeoutMs:
+              type: integer
+            reason:
+              type: string
+        config:
+          type: object
+          properties:
+            maxTraversalDepth:
+              type: integer
+            defaultLatencyMetric:
+              type: string
+            graphApiEnabled:
+              type: boolean
+        uptimeSeconds:
+          type: number
+
+    ServiceIdentifier:
+      type: object
+      description: Service can be identified by serviceId OR by name+namespace
+      properties:
+        serviceId:
+          type: string
+          description: "Canonical service ID in format 'namespace:name'"
+          example: "default:frontend"
+        name:
+          type: string
+          description: Service name (use with namespace)
+          example: frontend
+        namespace:
+          type: string
+          description: Kubernetes namespace (use with name)
+          example: default
+
+    FailureSimulationRequest:
+      allOf:
+        - $ref: '#/components/schemas/ServiceIdentifier'
+        - type: object
+          properties:
+            maxDepth:
+              type: integer
+              minimum: 1
+              maximum: 3
+              default: 2
+              description: Maximum traversal depth for impact analysis
+
+    FailureSimulationResponse:
+      type: object
+      properties:
+        target:
+          $ref: '#/components/schemas/ServiceReference'
+        neighborhood:
+          $ref: '#/components/schemas/NeighborhoodInfo'
+        dataFreshness:
+          $ref: '#/components/schemas/DataFreshness'
+        confidence:
+          type: string
+          enum: [high, low, unknown]
+        explanation:
+          type: string
+        affectedCallers:
+          type: array
+          items:
+            $ref: '#/components/schemas/AffectedCaller'
+        affectedDownstream:
+          type: array
+          items:
+            $ref: '#/components/schemas/AffectedDownstream'
+        unreachableServices:
+          type: array
+          items:
+            $ref: '#/components/schemas/UnreachableService'
+        criticalPathsToTarget:
+          type: array
+          items:
+            $ref: '#/components/schemas/CriticalPath'
+        totalLostTrafficRps:
+          type: number
+        recommendations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Recommendation'
+
+    ScalingSimulationRequest:
+      allOf:
+        - $ref: '#/components/schemas/ServiceIdentifier'
+        - type: object
+          required:
+            - currentPods
+          properties:
+            currentPods:
+              type: integer
+              minimum: 1
+              description: Current number of pods
+            newPods:
+              type: integer
+              minimum: 1
+              description: "Target number of pods (alias: targetPods, pods)"
+            targetPods:
+              type: integer
+              minimum: 1
+              description: Alias for newPods
+            latencyMetric:
+              type: string
+              enum: [p50, p95, p99]
+              default: p95
+              description: Latency percentile to use
+            model:
+              $ref: '#/components/schemas/ScalingModel'
+            maxDepth:
+              type: integer
+              minimum: 1
+              maximum: 3
+              default: 2
+              description: Maximum traversal depth
+
+    ScalingModel:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [bounded_sqrt, linear]
+          default: bounded_sqrt
+          description: Scaling model type
+        alpha:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.5
+          description: Fixed overhead fraction (only for bounded_sqrt)
+
+    ScalingSimulationResponse:
+      type: object
+      properties:
+        target:
+          $ref: '#/components/schemas/ServiceReference'
+        neighborhood:
+          $ref: '#/components/schemas/NeighborhoodInfo'
+        dataFreshness:
+          $ref: '#/components/schemas/DataFreshness'
+        confidence:
+          type: string
+          enum: [high, low, unknown]
+        latencyMetric:
+          type: string
+        scalingModel:
+          $ref: '#/components/schemas/ScalingModel'
+        currentPods:
+          type: integer
+        newPods:
+          type: integer
+        latencyEstimate:
+          $ref: '#/components/schemas/LatencyEstimate'
+        affectedCallers:
+          type: object
+          properties:
+            description:
+              type: string
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/AffectedCallerScaling'
+        affectedPaths:
+          type: array
+          items:
+            $ref: '#/components/schemas/AffectedPathScaling'
+        recommendations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Recommendation'
+
+    RiskAnalysisResponse:
+      type: object
+      properties:
+        metric:
+          type: string
+          enum: [pagerank, betweenness]
+        services:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskService'
+        dataFreshness:
+          $ref: '#/components/schemas/DataFreshness'
+        confidence:
+          type: string
+          enum: [high, low, unknown]
+
+    RiskService:
+      type: object
+      properties:
+        serviceId:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+        centralityScore:
+          type: number
+        riskLevel:
+          type: string
+          enum: [high, medium, low]
+        explanation:
+          type: string
+
+    ServiceReference:
+      type: object
+      properties:
+        serviceId:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+
+    NeighborhoodInfo:
+      type: object
+      properties:
+        description:
+          type: string
+        serviceCount:
+          type: integer
+        edgeCount:
+          type: integer
+        depthUsed:
+          type: integer
+        generatedAt:
+          type: string
+          format: date-time
+
+    DataFreshness:
+      type: object
+      nullable: true
+      properties:
+        source:
+          type: string
+        stale:
+          type: boolean
+        lastUpdatedSecondsAgo:
+          type: number
+        windowMinutes:
+          type: integer
+
+    AffectedCaller:
+      type: object
+      properties:
+        serviceId:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+        lostTrafficRps:
+          type: number
+        edgeErrorRate:
+          type: number
+
+    AffectedDownstream:
+      type: object
+      properties:
+        serviceId:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+        lostTrafficRps:
+          type: number
+        edgeErrorRate:
+          type: number
+
+    UnreachableService:
+      type: object
+      properties:
+        serviceId:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+        lostTrafficRps:
+          type: number
+        lostFromTargetRps:
+          type: number
+        lostFromReachableCutsRps:
+          type: number
+
+    CriticalPath:
+      type: object
+      properties:
+        path:
+          type: array
+          items:
+            type: string
+        pathRps:
+          type: number
+
+    AffectedCallerScaling:
+      type: object
+      properties:
+        serviceId:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+        hopDistance:
+          type: integer
+        beforeMs:
+          type: number
+          nullable: true
+        afterMs:
+          type: number
+          nullable: true
+        deltaMs:
+          type: number
+          nullable: true
+        endToEndBeforeMs:
+          type: number
+          nullable: true
+        endToEndAfterMs:
+          type: number
+          nullable: true
+        endToEndDeltaMs:
+          type: number
+          nullable: true
+        viaPath:
+          type: array
+          nullable: true
+          items:
+            type: string
+
+    AffectedPathScaling:
+      type: object
+      properties:
+        path:
+          type: array
+          items:
+            type: string
+        pathRps:
+          type: number
+        beforeMs:
+          type: number
+          nullable: true
+        afterMs:
+          type: number
+          nullable: true
+        deltaMs:
+          type: number
+          nullable: true
+        incompleteData:
+          type: boolean
+
+    LatencyEstimate:
+      type: object
+      properties:
+        description:
+          type: string
+        baselineMs:
+          type: number
+          nullable: true
+        projectedMs:
+          type: number
+          nullable: true
+        deltaMs:
+          type: number
+          nullable: true
+        unit:
+          type: string
+
+    Recommendation:
+      type: object
+      properties:
+        type:
+          type: string
+        priority:
+          type: string
+          enum: [high, medium, low]
+        description:
+          type: string

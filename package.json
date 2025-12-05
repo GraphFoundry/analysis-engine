@@ -32,6 +32,8 @@
     "neo4j-driver": "^6.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.11"
+    "js-yaml": "^4.1.0",
+    "nodemon": "^3.1.11",
+    "swagger-ui-express": "^5.0.1"
   }
 }

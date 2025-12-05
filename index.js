@@ -8,6 +8,7 @@ const { simulateScaling } = require('./src/scalingSimulation');
 const { getTopRiskServices } = require('./src/riskAnalysis');
 const { correlationMiddleware } = require('./src/middleware/correlation');
 const { rateLimitMiddleware } = require('./src/middleware/rateLimit');
+const { setupSwagger } = require('./src/swagger');
 const {
     parseServiceIdentifier,
     normalizePodParams,
@@ -22,6 +23,9 @@ validateEnv();
 
 const app = express();
 app.use(express.json());
+
+// Swagger UI (conditional - only if ENABLE_SWAGGER=true)
+setupSwagger(app);
 
 // Correlation ID middleware (generates UUID, sets X-Correlation-Id header, logs requests)
 app.use(correlationMiddleware());

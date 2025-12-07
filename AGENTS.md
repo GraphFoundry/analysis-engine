@@ -73,6 +73,10 @@ PORT=3000
 - Follow the plan-first workflow: inventory → plan → questions → wait for approval
 - Redact credentials in logs (use `redactCredentials()` from `src/neo4j.js`)
 - Provide evidence (file path + snippet) when stating facts
+- **Add/update tests** for behavioral changes when test framework exists (see Testing Policy in `.github/copilot-instructions.md`)
+- **Update relevant docs** when behavior/config/API changes
+- **Update governance files** when workflows/standards are impacted
+- **Update `openapi.yaml`** for any API add/change/removal (see `.github/copilot-instructions.md` §0.4)
 
 ### ⚠️ ASK FIRST
 - Before consuming a new Graph API endpoint (verify contract exists)

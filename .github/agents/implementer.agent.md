@@ -84,6 +84,17 @@ When implementing graph data access:
 1. **Prefer leader's Graph API** (use `GRAPH_API_BASE_URL` env var)
 2. Use Neo4j **read-only fallback** only if Graph API is unavailable or missing capability
 
+### 6. OpenAPI Spec Updates
+
+When implementing API changes (add/modify/remove endpoints):
+
+- Update `openapi.yaml` in the same change
+- Ensure schemas match implementation
+- Document all status codes
+- Bump version in `info.version`
+
+> See full policy: `.github/copilot-instructions.md` §0.4
+
 ---
 
 ## Tool Access

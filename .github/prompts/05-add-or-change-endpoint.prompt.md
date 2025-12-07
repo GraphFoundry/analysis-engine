@@ -20,6 +20,7 @@ Please:
 3. Use consistent error handling (status codes, messages)
 4. Preserve timeout patterns for any async operations
 5. Document the endpoint in README.md
+6. Update `openapi.yaml` to reflect the API change (see `.github/copilot-instructions.md` §0.4)
 
 Do NOT implement until I say "OK IMPLEMENT NOW".
 ```
@@ -44,6 +45,7 @@ Please:
 3. Use consistent error handling (status codes, messages)
 4. Preserve timeout patterns for any async operations
 5. Document the endpoint in README.md
+6. Update `openapi.yaml` to reflect the API change (see `.github/copilot-instructions.md` §0.4)
 
 Do NOT implement until I say "OK IMPLEMENT NOW".
 ```

@@ -69,7 +69,16 @@ Copilot must check each item and report findings:
 
 > See full Testing Policy in `.github/copilot-instructions.md`
 
-### 7. Graph API First Policy
+### 7. OpenAPI Specification (per §0.4)
+
+- [ ] If API behavior changed (add/modify/remove endpoint), verify `openapi.yaml` updated
+- [ ] Request/response schemas match implementation
+- [ ] All status codes documented (200, 400, 500, etc.)
+- [ ] Version bumped in `info.version`
+
+> See full OpenAPI Policy in `.github/copilot-instructions.md` §0.4
+
+### 8. Graph API First Policy
 
 - [ ] Graph API is preferred over direct Neo4j access
 - [ ] Neo4j fallback is read-only and documented

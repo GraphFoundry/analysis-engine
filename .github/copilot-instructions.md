@@ -45,6 +45,46 @@ Copilot must **NOT**:
 - Adding a new test framework is NOT allowed without explicit user approval (propose minimal scaffolding first).
 - CI/CD workflow changes (`.github/workflows/*`) remain out of scope unless explicitly requested.
 
+### 0.4 OpenAPI Documentation Policy (Hard Stop)
+
+This repository maintains an OpenAPI 3.0 specification (`openapi.yaml`) that documents all HTTP API endpoints exposed by this service.
+
+**Hard rule:** Any change that adds, modifies, or removes API behavior **MUST** include corresponding updates to `openapi.yaml` in the same change.
+
+#### What counts as an API change:
+
+- Adding a new endpoint (path + method)
+- Changing request/response schema (body, query params, headers, status codes)
+- Modifying endpoint behavior (even if signature is unchanged)
+- Deprecating or removing an endpoint
+- Changing error response formats
+
+#### What must be updated in openapi.yaml:
+
+- `paths:` section (add/modify/remove endpoint)
+- `operationId:` (unique identifier for the operation)
+- Request `parameters:` and `requestBody:` schemas
+- Response `responses:` schemas for all status codes
+- `components/schemas:` definitions (if new types introduced)
+- `info.version:` (bump patch version for minor changes, minor version for new endpoints)
+
+#### What does NOT require OpenAPI updates:
+
+- Internal refactoring (no API signature change)
+- Performance improvements (no API signature change)
+- Documentation-only changes (e.g., updating README.md)
+- Configuration changes that don't affect API behavior
+
+#### Minimum checklist for API changes:
+
+- [ ] `openapi.yaml` updated with new/changed endpoint details
+- [ ] Request/response schemas match actual implementation
+- [ ] All status codes documented (200, 400, 500, etc.)
+- [ ] Version bumped in `info.version`
+- [ ] Swagger UI validates (start server with `ENABLE_SWAGGER=true`, visit `/swagger`)
+
+**Blocked without approval:** If Copilot is asked to add/modify an endpoint but not update OpenAPI spec, it must stop and cite this rule.
+
 ---
 
 ## 1) Ownership & Integration Boundaries (Non-negotiable)
@@ -203,6 +243,7 @@ A task is done only when:
 - The user approves implementation with `OK IMPLEMENT NOW`
 - Files are created/updated exactly as proposed
 - **Tests added/updated** when applicable (per Testing Policy in §0.3)
+- **OpenAPI spec (`openapi.yaml`) updated** for any API behavior change (add/modify/remove endpoint) per §0.4
 - **Relevant docs updated** when behavior/config/API changes
 - **Governance files updated** when the change impacts workflows/standards
 - **Verification:** `npm test` run when possible (otherwise provide commands + pass criteria)

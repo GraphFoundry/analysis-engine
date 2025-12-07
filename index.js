@@ -254,6 +254,8 @@ app.get('/risk/services/top', async (req, res) => {
             res.status(400).json({ error: error.message });
         } else if (error.message.includes('disabled')) {
             res.status(503).json({ error: 'Graph API is not enabled' });
+        } else if (error.message.toLowerCase().includes('timeout')) {
+            res.status(504).json({ error: 'Graph API timeout' });
         } else {
             console.error('Risk analysis error:', error);
             res.status(500).json({ error: 'Internal server error' });

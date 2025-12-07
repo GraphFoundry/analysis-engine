@@ -119,17 +119,20 @@ async function getTopRiskServices({ metric = 'pagerank', limit = 5 } = {}) {
     const total = topServices.length;
 
     const services = topServices.map((item, rank) => {
-        const serviceName = item.service;
+        const rawServiceName = item.service;
         const score = item.value || 0;
         const riskLevel = determineRiskLevel(score, rank, total);
         
+        // Parse namespace:name format if present, else default to "default" namespace
+        const { serviceId, name, namespace } = parseServiceIdentifier(rawServiceName);
+        
         return {
-            serviceId: `default:${serviceName}`,  // Canonical format
-            name: serviceName,
-            namespace: 'default',  // Graph engine doesn't provide namespace
+            serviceId,
+            name,
+            namespace,
             centralityScore: score,
             riskLevel,
-            explanation: generateExplanation(serviceName, metric, score, riskLevel)
+            explanation: generateExplanation(name, metric, score, riskLevel)
         };
     });
 
@@ -141,12 +144,32 @@ async function getTopRiskServices({ metric = 'pagerank', limit = 5 } = {}) {
     };
 }
 
+/**
+ * Parse service identifier - supports "namespace:name" format or plain name
+ * @param {string} rawServiceName - Service name from Graph API
+ * @returns {{serviceId: string, name: string, namespace: string}}
+ */
+function parseServiceIdentifier(rawServiceName) {
+    if (rawServiceName.includes(':')) {
+        const colonIndex = rawServiceName.indexOf(':');
+        const namespace = rawServiceName.substring(0, colonIndex);
+        const name = rawServiceName.substring(colonIndex + 1);
+        return { serviceId: rawServiceName, name, namespace };
+    }
+    return { 
+        serviceId: `default:${rawServiceName}`, 
+        name: rawServiceName, 
+        namespace: 'default' 
+    };
+}
+
 module.exports = {
     getTopRiskServices,
     // Exported for testing
     _test: {
         determineRiskLevel,
         generateExplanation,
+        parseServiceIdentifier,
         RISK_THRESHOLDS
     }
 };

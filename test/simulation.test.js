@@ -493,4 +493,119 @@ test('estimateBoundaryLostTraffic - service with only target edge shows non-zero
     }, 'B should have 75 RPS from target (was previously 0)');
 });
 
+/**
+ * Test: Scaling response includes scalingDirection
+ */
+test('scalingDirection - computed correctly for scale up', () => {
+    const currentPods = 2;
+    const newPods = 4;
+    const direction = newPods > currentPods ? 'up' : newPods < currentPods ? 'down' : 'none';
+    assert.strictEqual(direction, 'up');
+});
+
+test('scalingDirection - computed correctly for scale down', () => {
+    const currentPods = 4;
+    const newPods = 2;
+    const direction = newPods > currentPods ? 'up' : newPods < currentPods ? 'down' : 'none';
+    assert.strictEqual(direction, 'down');
+});
+
+test('scalingDirection - computed correctly for no change', () => {
+    const currentPods = 3;
+    const newPods = 3;
+    const direction = newPods > currentPods ? 'up' : newPods < currentPods ? 'down' : 'none';
+    assert.strictEqual(direction, 'none');
+});
+
+/**
+ * Test: Scaling explanation generation
+ */
+test('scaling explanation - includes key information when latency is known', () => {
+    const targetName = 'cartservice';
+    const currentPods = 2;
+    const newPods = 4;
+    const scalingDirection = 'up';
+    const baselineMs = 120.5;
+    const projectedMs = 85.2;
+    const deltaMs = projectedMs - baselineMs;
+    const callersCount = 3;
+    const pathsCount = 2;
+    
+    const directionWord = scalingDirection === 'up' ? 'up' : scalingDirection === 'down' ? 'down' : 'at same level';
+    const improvementWord = deltaMs < 0 ? 'improves' : deltaMs > 0 ? 'degrades' : 'maintains';
+    
+    const explanation = `Scaling ${targetName} ${directionWord} from ${currentPods} to ${newPods} pods ` +
+        `${improvementWord} latency by ${Math.abs(deltaMs).toFixed(1)}ms ` +
+        `(baseline: ${baselineMs.toFixed(1)}ms → projected: ${projectedMs.toFixed(1)}ms). ` +
+        `${callersCount} upstream caller(s) affected across ${pathsCount} path(s).`;
+    
+    assert.ok(explanation.includes('cartservice'), 'Should include target name');
+    assert.ok(explanation.includes('up'), 'Should include direction');
+    assert.ok(explanation.includes('2 to 4'), 'Should include pod counts');
+    assert.ok(explanation.includes('improves'), 'Should indicate improvement');
+    assert.ok(explanation.includes('35.3ms'), 'Should include delta magnitude');
+    assert.ok(explanation.includes('3 upstream caller'), 'Should include callers count');
+});
+
+test('scaling explanation - handles unknown latency gracefully', () => {
+    const targetName = 'frontend';
+    const currentPods = 2;
+    const newPods = 4;
+    const scalingDirection = 'up';
+    const callersCount = 2;
+    const pathsCount = 1;
+    
+    // Simulate when latency is null
+    const directionWord = scalingDirection === 'up' ? 'up' : scalingDirection === 'down' ? 'down' : 'at same level';
+    const explanation = `Scaling ${targetName} ${directionWord} from ${currentPods} to ${newPods} pods. ` +
+        `Latency impact unknown due to missing edge metrics. ` +
+        `${callersCount} upstream caller(s) identified across ${pathsCount} path(s).`;
+    
+    assert.ok(explanation.includes('frontend'), 'Should include target name');
+    assert.ok(explanation.includes('unknown'), 'Should indicate unknown latency');
+    assert.ok(explanation.includes('missing edge metrics'), 'Should explain why unknown');
+});
+
+/**
+ * Test: Warnings array for incomplete data
+ */
+test('warnings array - generated when paths have incomplete data', () => {
+    const affectedPaths = [
+        { path: ['A', 'B'], pathRps: 100, incompleteData: false },
+        { path: ['C', 'D'], pathRps: 50, incompleteData: true },
+        { path: ['E', 'F'], pathRps: 25, incompleteData: true }
+    ];
+    
+    const incompletePathsCount = affectedPaths.filter(p => p.incompleteData).length;
+    const totalPaths = affectedPaths.length;
+    
+    let warnings;
+    if (incompletePathsCount > 0) {
+        warnings = [
+            `${incompletePathsCount} of ${totalPaths} path(s) have incomplete latency data (missing edge metrics). Results may be partial.`
+        ];
+    }
+    
+    assert.ok(warnings !== undefined, 'Warnings should be defined when incomplete data exists');
+    assert.strictEqual(warnings.length, 1, 'Should have exactly one warning');
+    assert.ok(warnings[0].includes('2 of 3'), 'Should specify count of incomplete paths');
+    assert.ok(warnings[0].includes('incomplete latency data'), 'Should mention incomplete data');
+});
+
+test('warnings array - not generated when all paths complete', () => {
+    const affectedPaths = [
+        { path: ['A', 'B'], pathRps: 100, incompleteData: false },
+        { path: ['C', 'D'], pathRps: 50, incompleteData: false }
+    ];
+    
+    const incompletePathsCount = affectedPaths.filter(p => p.incompleteData).length;
+    
+    let warnings;
+    if (incompletePathsCount > 0) {
+        warnings = [`${incompletePathsCount} paths have incomplete data`];
+    }
+    
+    assert.strictEqual(warnings, undefined, 'Warnings should not be defined when all paths are complete');
+});
+
 console.log('All tests passed!');

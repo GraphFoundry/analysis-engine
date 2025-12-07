@@ -2,7 +2,7 @@ const assert = require('node:assert');
 const { test, describe } = require('node:test');
 const { _test } = require('../src/riskAnalysis');
 
-const { determineRiskLevel, generateExplanation, RISK_THRESHOLDS } = _test;
+const { determineRiskLevel, generateExplanation, parseServiceIdentifier, RISK_THRESHOLDS } = _test;
 
 describe('Risk Analysis - determineRiskLevel', () => {
     test('returns high for top 20% with positive score', () => {
@@ -75,5 +75,35 @@ describe('Risk Analysis - RISK_THRESHOLDS', () => {
     test('thresholds are in descending order', () => {
         assert.ok(RISK_THRESHOLDS.high > RISK_THRESHOLDS.medium);
         assert.ok(RISK_THRESHOLDS.medium >= RISK_THRESHOLDS.low);
+    });
+});
+
+describe('Risk Analysis - parseServiceIdentifier', () => {
+    test('parses plain service name with default namespace', () => {
+        const result = parseServiceIdentifier('frontend');
+        assert.strictEqual(result.serviceId, 'default:frontend');
+        assert.strictEqual(result.name, 'frontend');
+        assert.strictEqual(result.namespace, 'default');
+    });
+
+    test('parses namespace:name format correctly', () => {
+        const result = parseServiceIdentifier('kube-system:coredns');
+        assert.strictEqual(result.serviceId, 'kube-system:coredns');
+        assert.strictEqual(result.name, 'coredns');
+        assert.strictEqual(result.namespace, 'kube-system');
+    });
+
+    test('handles custom namespace', () => {
+        const result = parseServiceIdentifier('prod:api-gateway');
+        assert.strictEqual(result.serviceId, 'prod:api-gateway');
+        assert.strictEqual(result.name, 'api-gateway');
+        assert.strictEqual(result.namespace, 'prod');
+    });
+
+    test('handles service name with multiple colons (uses first colon as separator)', () => {
+        const result = parseServiceIdentifier('ns:service:with:colons');
+        assert.strictEqual(result.serviceId, 'ns:service:with:colons');
+        assert.strictEqual(result.name, 'service:with:colons');
+        assert.strictEqual(result.namespace, 'ns');
     });
 });

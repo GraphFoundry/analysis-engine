@@ -81,6 +81,10 @@ paths:
       description: |
         Simulate failure of a service and report the impact on upstream callers,
         downstream dependents, and potentially unreachable services.
+        
+        **Determinism Guarantee:** For the same input and graph snapshot, this endpoint
+        returns identical results. The algorithm uses deterministic BFS traversal and
+        fixed sorting criteria (no randomness).
       operationId: simulateFailure
       requestBody:
         required: true
@@ -195,6 +199,19 @@ paths:
       description: |
         Simulate scaling a service (changing pod count) and report the latency impact
         on upstream callers and critical paths.
+        
+        **Determinism Guarantee:** For the same input and graph snapshot, this endpoint
+        returns identical results. The algorithm uses deterministic formulas and fixed
+        traversal order (no randomness).
+        
+        **Scaling Models:**
+        - **bounded_sqrt** (default): Realistic model with diminishing returns.
+          Formula: `newLatency = baseLatency * (alpha + (1-alpha) / sqrt(ratio))`
+          where ratio = newPods/currentPods, alpha = fixed overhead fraction (default 0.5).
+          Result is clamped to minLatencyFactor * baseLatency (default 60% of baseline).
+        - **linear**: Optimistic model assuming perfect scaling.
+          Formula: `newLatency = baseLatency * (currentPods / newPods)`
+          Useful for best-case estimates; no overhead assumption.
       operationId: simulateScale
       requestBody:
         required: true
@@ -596,6 +613,13 @@ components:
           type: integer
         newPods:
           type: integer
+        scalingDirection:
+          type: string
+          enum: [up, down, none]
+          description: Direction of scaling (up if newPods > currentPods, down if less, none if equal)
+        explanation:
+          type: string
+          description: Human-readable summary of scaling impact including latency change and affected callers
         latencyEstimate:
           $ref: '#/components/schemas/LatencyEstimate'
         affectedCallers:
@@ -611,6 +635,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AffectedPathScaling'
+        warnings:
+          type: array
+          description: Present only when some paths have incomplete latency data
+          items:
+            type: string
         recommendations:
           type: array
           items:

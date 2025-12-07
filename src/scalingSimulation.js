@@ -370,6 +370,11 @@ async function simulateScaling(request) {
     const dataFreshness = snapshot.dataFreshness ?? null;
     const confidence = dataFreshness?.stale ? 'low' : 'high';
 
+    // Compute scaling direction
+    const scalingDirection = request.newPods > request.currentPods ? 'up' 
+        : request.newPods < request.currentPods ? 'down' 
+        : 'none';
+
     // Build result object (without recommendations first)
     const result = {
         target: {
@@ -399,12 +404,39 @@ async function simulateScaling(request) {
                 : null,
             unit: 'milliseconds'
         },
+        scalingDirection,
         affectedCallers: {
             description: 'Edge-level impact: deltaMs is change in this caller\'s direct outgoing edge latency. endToEndDeltaMs is cumulative path latency change.',
             items: affectedCallers.slice(0, config.simulation.maxPathsReturned)
         },
         affectedPaths
     };
+
+    // Generate explanation string
+    const latencyInfo = result.latencyEstimate;
+    const callersCount = result.affectedCallers.items.length;
+    const pathsCount = result.affectedPaths.length;
+    const directionWord = scalingDirection === 'up' ? 'up' : scalingDirection === 'down' ? 'down' : 'at same level';
+    
+    if (latencyInfo.baselineMs !== null && latencyInfo.projectedMs !== null) {
+        const improvementWord = latencyInfo.deltaMs < 0 ? 'improves' : latencyInfo.deltaMs > 0 ? 'degrades' : 'maintains';
+        result.explanation = `Scaling ${targetNode.name} ${directionWord} from ${request.currentPods} to ${request.newPods} pods ` +
+            `${improvementWord} latency by ${Math.abs(latencyInfo.deltaMs).toFixed(1)}ms ` +
+            `(baseline: ${latencyInfo.baselineMs.toFixed(1)}ms → projected: ${latencyInfo.projectedMs.toFixed(1)}ms). ` +
+            `${callersCount} upstream caller(s) affected across ${pathsCount} path(s).`;
+    } else {
+        result.explanation = `Scaling ${targetNode.name} ${directionWord} from ${request.currentPods} to ${request.newPods} pods. ` +
+            `Latency impact unknown due to missing edge metrics. ` +
+            `${callersCount} upstream caller(s) identified across ${pathsCount} path(s).`;
+    }
+
+    // Add warnings if any path has incomplete data
+    const incompletePathsCount = result.affectedPaths.filter(p => p.incompleteData).length;
+    if (incompletePathsCount > 0) {
+        result.warnings = [
+            `${incompletePathsCount} of ${pathsCount} path(s) have incomplete latency data (missing edge metrics). Results may be partial.`
+        ];
+    }
 
     // Generate recommendations based on result
     result.recommendations = generateScalingRecommendations(result);

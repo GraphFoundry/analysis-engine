@@ -1,0 +1,9 @@
+# Spectral OpenAPI Linter Configuration
+# See: https://docs.stoplight.io/docs/spectral/
+
+extends:
+  - "spectral:oas"
+
+# Custom rules can be added here if needed
+# rules:
+#   operation-operationId: warn

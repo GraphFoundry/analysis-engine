@@ -1,6 +1,7 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
   title: Predictive Analysis Engine API
+  summary: Predictive analysis for microservice failure and scaling scenarios
   description: |
     API for simulating failure and scaling scenarios in microservice call graphs.
     
@@ -13,6 +14,7 @@ info:
   contact:
     name: Team Alpha Zero
   license:
+    identifier: ISC
     name: ISC
 
 servers:

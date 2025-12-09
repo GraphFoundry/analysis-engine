@@ -4,6 +4,11 @@
 extends:
   - "spectral:oas"
 
-# Custom rules can be added here if needed
-# rules:
-#   operation-operationId: warn
+# Custom rule severity overrides
+rules:
+  # Ensure all operations have unique operationId (critical for SDK generation)
+  operation-operationId-unique: error
+  # Ensure all operations have descriptions (important for documentation)
+  operation-description: warn
+  # Ensure all operations have operationId (critical for SDK generation)
+  operation-operationId: warn

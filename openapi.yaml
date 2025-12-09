@@ -21,6 +21,10 @@ servers:
   - url: http://localhost:7000
     description: Local development server
 
+externalDocs:
+  description: Project documentation and usage guide
+  url: https://github.com/Team-Alpha-Zero/predictive-analysis-engine
+
 tags:
   - name: Health
     description: Health check and connectivity status
@@ -422,12 +426,15 @@ components:
   schemas:
     ErrorResponse:
       type: object
+      description: Standard error response returned by all endpoints on failure
       required:
         - error
+      example:
+        error: "Service 'unknown-service' not found in graph"
       properties:
         error:
           type: string
-          description: Error message
+          description: Human-readable error message describing what went wrong
 
     HealthResponse:
       type: object
@@ -484,6 +491,10 @@ components:
     ServiceIdentifier:
       type: object
       description: Service can be identified by serviceId OR by name+namespace
+      example:
+        serviceId: "default:frontend"
+        name: frontend
+        namespace: default
       properties:
         serviceId:
           type: string
@@ -582,6 +593,9 @@ components:
 
     ScalingModel:
       type: object
+      example:
+        type: bounded_sqrt
+        alpha: 0.5
       properties:
         type:
           type: string
@@ -708,15 +722,24 @@ components:
     DataFreshness:
       type: object
       nullable: true
+      example:
+        source: graph-engine
+        stale: false
+        lastUpdatedSecondsAgo: 30
+        windowMinutes: 5
       properties:
         source:
           type: string
+          description: Data source identifier (graph-engine or neo4j)
         stale:
           type: boolean
+          description: Whether the data is considered stale
         lastUpdatedSecondsAgo:
           type: number
+          description: Seconds since last data refresh
         windowMinutes:
           type: integer
+          description: Data aggregation window in minutes
 
     AffectedCaller:
       type: object

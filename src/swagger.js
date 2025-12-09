@@ -68,7 +68,10 @@ function setupSwagger(app) {
             customCss: '.swagger-ui .topbar { display: none }',
             swaggerOptions: {
                 persistAuthorization: true,
-                displayRequestDuration: true
+                displayRequestDuration: true,
+                displayOperationId: true,
+                tryItOutEnabled: true,
+                deepLinking: true
             }
         };
 

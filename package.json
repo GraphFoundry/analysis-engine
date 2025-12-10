@@ -11,7 +11,6 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "test": "node --test test/*.test.js",
-    "verify": "node verify-schema.js",
     "openapi:validate": "spectral lint openapi.yaml",
     "openapi:lint": "spectral lint openapi.yaml --format stylish"
   },
@@ -22,7 +21,7 @@
   "keywords": [
     "microservices",
     "simulation",
-    "neo4j",
+    "graph-engine",
     "observability"
   ],
   "author": "",
@@ -34,8 +33,7 @@
   "dependencies": {
     "commander": "^11.1.0",
     "dotenv": "^17.2.3",
-    "express": "^4.22.1",
-    "neo4j-driver": "^6.0.1"
+    "express": "^4.22.1"
   },
   "devDependencies": {
     "@stoplight/spectral-cli": "^6.15.0",

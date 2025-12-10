@@ -1,14 +1,6 @@
 require('dotenv').config();
 
 /**
- * Check if running in graph-engine-only mode (no Neo4j at runtime)
- * @returns {boolean}
- */
-function isGraphEngineOnlyMode() {
-  return process.env.GRAPH_ENGINE_ONLY === 'true';
-}
-
-/**
  * Validate required environment variables at startup.
  * Fails fast with clear error messages before any connections are attempted.
  * 
@@ -17,54 +9,20 @@ function isGraphEngineOnlyMode() {
  */
 function validateEnv() {
   const errors = [];
-  const graphEngineOnly = isGraphEngineOnlyMode();
   
-  // In graph-engine-only mode, force Graph API usage
-  if (graphEngineOnly) {
-    if (process.env.USE_GRAPH_ENGINE_API !== 'true') {
-      console.warn('[WARN] GRAPH_ENGINE_ONLY=true implies USE_GRAPH_ENGINE_API=true. Forcing Graph API mode.');
-      process.env.USE_GRAPH_ENGINE_API = 'true';
-    }
-    
-    if (!process.env.GRAPH_ENGINE_BASE_URL && !process.env.SERVICE_GRAPH_ENGINE_URL) {
-      errors.push('GRAPH_ENGINE_BASE_URL (or SERVICE_GRAPH_ENGINE_URL) is required when GRAPH_ENGINE_ONLY=true');
-    }
-    
-    // No Neo4j vars required in this mode
-  } else if (process.env.USE_GRAPH_ENGINE_API === 'true') {
-    // Graph API mode - require base URL
-    if (!process.env.GRAPH_ENGINE_BASE_URL && !process.env.SERVICE_GRAPH_ENGINE_URL) {
-      errors.push('GRAPH_ENGINE_BASE_URL (or SERVICE_GRAPH_ENGINE_URL) is required when USE_GRAPH_ENGINE_API=true');
-    }
-  } else {
-    // Neo4j mode - require credentials
-    if (!process.env.NEO4J_URI) {
-      errors.push('NEO4J_URI is required (e.g., neo4j+s://xxxx.databases.neo4j.io)');
-    }
-    
-    if (!process.env.NEO4J_PASSWORD) {
-      errors.push('NEO4J_PASSWORD is required');
-    }
+  // Graph Engine is always required
+  if (!process.env.GRAPH_ENGINE_BASE_URL && !process.env.SERVICE_GRAPH_ENGINE_URL) {
+    errors.push('GRAPH_ENGINE_BASE_URL (or SERVICE_GRAPH_ENGINE_URL) is required');
   }
   
   if (errors.length > 0) {
     console.error('\n❌ Missing required environment variables:\n');
     errors.forEach(err => console.error(`   - ${err}`));
-    if (graphEngineOnly || process.env.USE_GRAPH_ENGINE_API === 'true') {
-      console.error('\n   Set GRAPH_ENGINE_BASE_URL to point to service-graph-engine.\n');
-    } else {
-      console.error('\n   Copy .env.example to .env and fill in your Neo4j credentials.\n');
-    }
+    console.error('\n   Set GRAPH_ENGINE_BASE_URL or SERVICE_GRAPH_ENGINE_URL to point to service-graph-engine.\n');
+    console.error('   Example: GRAPH_ENGINE_BASE_URL=http://service-graph-engine:3000\n');
     process.exit(1);
   }
 }
-
-/**
- * @typedef {Object} Neo4jConfig
- * @property {string} uri - Neo4j connection URI
- * @property {string} user - Neo4j username
- * @property {string} password - Neo4j password (never logged)
- */
 
 /**
  * @typedef {Object} SimulationConfig
@@ -73,7 +31,7 @@ function validateEnv() {
  * @property {string} scalingModel - Scaling model type (bounded_sqrt, linear)
  * @property {number} scalingAlpha - Fixed overhead fraction (0.0-1.0)
  * @property {number} minLatencyFactor - Minimum latency improvement factor
- * @property {number} timeoutMs - Neo4j query and HTTP request timeout
+ * @property {number} timeoutMs - HTTP request timeout
  * @property {number} maxPathsReturned - Maximum paths to return in results
  */
 
@@ -85,14 +43,12 @@ function validateEnv() {
 /**
  * @typedef {Object} GraphApiConfig
  * @property {string} baseUrl - Base URL of service-graph-engine
- * @property {boolean} enabled - Whether to use the Graph API
  * @property {number} timeoutMs - Request timeout in milliseconds
  * @property {boolean} required - Whether Graph API failure should degrade overall status
  */
 
 /**
  * @typedef {Object} Config
- * @property {Neo4jConfig} neo4j
  * @property {SimulationConfig} simulation
  * @property {ServerConfig} server
  * @property {GraphApiConfig} graphApi
@@ -100,11 +56,6 @@ function validateEnv() {
 
 /** @type {Config} */
 const config = {
-  neo4j: {
-    uri: process.env.NEO4J_URI,
-    user: process.env.NEO4J_USER || 'neo4j',
-    password: process.env.NEO4J_PASSWORD
-  },
   simulation: {
     defaultLatencyMetric: process.env.DEFAULT_LATENCY_METRIC || 'p95',
     maxTraversalDepth: parseInt(process.env.MAX_TRAVERSAL_DEPTH) || 2,
@@ -118,12 +69,8 @@ const config = {
     port: parseInt(process.env.PORT) || 7000
   },
   graphApi: {
-    baseUrl: process.env.GRAPH_ENGINE_BASE_URL || process.env.SERVICE_GRAPH_ENGINE_URL || '',
-    enabled: process.env.USE_GRAPH_ENGINE_API === 'true' || process.env.GRAPH_ENGINE_ONLY === 'true',
-    timeoutMs: parseInt(process.env.GRAPH_API_TIMEOUT_MS) || 5000,
-    required: process.env.REQUIRE_GRAPH_API === 'true',
-    // Strict mode: no Neo4j fallback at all
-    graphEngineOnly: process.env.GRAPH_ENGINE_ONLY === 'true'
+    baseUrl: process.env.GRAPH_ENGINE_BASE_URL || process.env.SERVICE_GRAPH_ENGINE_URL || 'http://service-graph-engine:3000',
+    timeoutMs: parseInt(process.env.GRAPH_API_TIMEOUT_MS) || 5000
   },
   rateLimit: {
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000,
@@ -133,4 +80,3 @@ const config = {
 
 module.exports = config;
 module.exports.validateEnv = validateEnv;
-module.exports.isGraphEngineOnlyMode = isGraphEngineOnlyMode;

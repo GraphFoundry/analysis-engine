@@ -217,7 +217,7 @@ async function simulateFailure(request) {
         throw new Error(`maxDepth must be integer 1, 2, or 3. Got: ${maxDepth}`);
     }
     
-    // Fetch upstream neighborhood via provider (Neo4j or Graph API)
+    // Fetch upstream neighborhood via Graph Engine
     const provider = getProvider();
     const snapshot = await provider.fetchUpstreamNeighborhood(request.serviceId, maxDepth);
     

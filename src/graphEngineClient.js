@@ -94,10 +94,6 @@ function normalizeBaseUrl(baseUrl) {
  * @returns {Promise<ClientSuccess|ClientError>}
  */
 async function checkGraphHealth() {
-    if (!config.graphApi.enabled) {
-        return { ok: false, error: 'Graph API is disabled' };
-    }
-
     const baseUrl = normalizeBaseUrl(config.graphApi.baseUrl);
     const url = `${baseUrl}/graph/health`;
     return httpGet(url, config.graphApi.timeoutMs);
@@ -112,13 +108,15 @@ function getBaseUrl() {
 }
 
 /**
- * Check if graph API is enabled
+ * Check if graph API is enabled (always true - Graph Engine is the only data source)
  * @returns {boolean}
  */
 function isEnabled() {
-    return config.graphApi.enabled;
+    return true;
 }
 
+/**
+ * Get k-hop neighborhood for a service
 /**
  * Get k-hop neighborhood for a service
  * @param {string} serviceName - Service name (e.g., "frontend")
@@ -126,10 +124,6 @@ function isEnabled() {
  * @returns {Promise<ClientSuccess|ClientError>}
  */
 async function getNeighborhood(serviceName, k) {
-    if (!config.graphApi.enabled) {
-        return { ok: false, error: 'Graph API is disabled' };
-    }
-
     const baseUrl = normalizeBaseUrl(config.graphApi.baseUrl);
     const url = `${baseUrl}/services/${encodeURIComponent(serviceName)}/neighborhood?k=${k}`;
     return httpGet(url, config.graphApi.timeoutMs);
@@ -142,10 +136,6 @@ async function getNeighborhood(serviceName, k) {
  * @returns {Promise<ClientSuccess|ClientError>}
  */
 async function getPeers(serviceName, direction) {
-    if (!config.graphApi.enabled) {
-        return { ok: false, error: 'Graph API is disabled' };
-    }
-
     const baseUrl = normalizeBaseUrl(config.graphApi.baseUrl);
     const url = `${baseUrl}/services/${encodeURIComponent(serviceName)}/peers?direction=${direction}`;
     return httpGet(url, config.graphApi.timeoutMs);
@@ -164,10 +154,6 @@ async function getPeers(serviceName, direction) {
  * @returns {Promise<ClientSuccess|ClientError>}
  */
 async function getCentralityTop(metric = 'pagerank', limit = 5) {
-    if (!config.graphApi.enabled) {
-        return { ok: false, error: 'Graph API is disabled' };
-    }
-
     // Validate metric to prevent injection
     const validMetrics = ['pagerank', 'betweenness'];
     if (!validMetrics.includes(metric)) {

@@ -35,76 +35,63 @@ const startTime = Date.now();
 
 /**
  * Health check endpoint
- * Returns data source connectivity status (Neo4j or Graph API) and config info
+ * Returns Graph Engine connectivity status and config info
+ * Always returns HTTP 200 with status: "ok" | "degraded"
  */
 app.get('/health', async (req, res) => {
     try {
-        const provider = getProvider();
-        const providerHealth = await provider.checkHealth();
         const uptimeSeconds = Math.round((Date.now() - startTime) / 100) / 10;
-
-        // Graph API health (conditional)
+        
+        // Check Graph Engine health
+        const graphResult = await checkGraphHealth();
+        
+        let status = 'ok';
         let graphApi;
-        if (config.graphApi.enabled) {
-            const graphResult = await checkGraphHealth();
-            if (graphResult.ok) {
-                graphApi = {
-                    enabled: true,
-                    available: true,
-                    status: graphResult.data.status,
-                    stale: graphResult.data.stale,
-                    lastUpdatedSecondsAgo: graphResult.data.lastUpdatedSecondsAgo,
-                    // Debug fields for troubleshooting
-                    baseUrl: config.graphApi.baseUrl,
-                    timeoutMs: config.graphApi.timeoutMs
-                };
-            } else {
-                graphApi = {
-                    enabled: true,
-                    available: false,
-                    reason: graphResult.error,
-                    // Debug fields for troubleshooting
-                    baseUrl: config.graphApi.baseUrl,
-                    timeoutMs: config.graphApi.timeoutMs
-                };
+        
+        if (graphResult.ok) {
+            const { stale, lastUpdatedSecondsAgo } = graphResult.data;
+            
+            // Status is degraded if graph is stale
+            if (stale) {
+                status = 'degraded';
             }
+            
+            graphApi = {
+                connected: true,
+                status: graphResult.data.status,
+                stale,
+                lastUpdatedSecondsAgo,
+                baseUrl: config.graphApi.baseUrl,
+                timeoutMs: config.graphApi.timeoutMs
+            };
         } else {
-            graphApi = { enabled: false, reason: 'disabled' };
-        }
-
-        // Determine overall status based on active provider
-        let overallStatus;
-        if (config.graphApi.enabled) {
-            // In Graph API mode, check Graph API availability
-            const graphApiOk = graphApi.available === true;
-            const staleOk = !config.graphApi.required || !graphApi.stale;
-            overallStatus = (graphApiOk && staleOk) ? 'ok' : 'degraded';
-        } else {
-            // In Neo4j mode, check Neo4j connectivity
-            overallStatus = providerHealth.connected ? 'ok' : 'degraded';
+            // Graph Engine unavailable = always degraded
+            status = 'degraded';
+            graphApi = {
+                connected: false,
+                error: graphResult.error,
+                baseUrl: config.graphApi.baseUrl,
+                timeoutMs: config.graphApi.timeoutMs
+            };
         }
 
         res.json({
-            status: overallStatus,
-            dataSource: config.graphApi.enabled ? 'graph-api' : 'neo4j',
-            provider: {
-                connected: providerHealth.connected,
-                services: providerHealth.services,
-                stale: providerHealth.stale,
-                error: providerHealth.error
-            },
+            status,
+            provider: 'graph-engine',
             graphApi,
             config: {
                 maxTraversalDepth: config.simulation.maxTraversalDepth,
-                defaultLatencyMetric: config.simulation.defaultLatencyMetric,
-                graphApiEnabled: config.graphApi.enabled
+                defaultLatencyMetric: config.simulation.defaultLatencyMetric
             },
             uptimeSeconds
         });
     } catch (error) {
-        res.status(500).json({
-            status: 'error',
-            error: error.message
+        // Always return 200 even on error, with degraded status
+        res.json({
+            status: 'degraded',
+            provider: 'graph-engine',
+            error: error.message,
+            uptimeSeconds: Math.round((Date.now() - startTime) / 100) / 10
         });
     }
 });

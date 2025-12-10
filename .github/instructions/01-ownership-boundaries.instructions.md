@@ -1,6 +1,6 @@
 ---
 applyTo: "**/*"
-description: 'Defines what this repository owns vs external team ownership - Neo4j schema, Graph API, and metrics are external'
+description: 'Defines what this repository owns vs external team ownership - Graph Engine schema and metrics are external'
 ---
 
 # Ownership Boundaries
@@ -13,16 +13,16 @@ This document defines what this repository owns versus what is owned by external
 
 Copilot must assume the following are **NOT owned by this repo**:
 
-### Neo4j Schema
+### Graph Engine Schema
 
-- **Owner:** Leader / Platform Team
-- **This repo's role:** Consumer (read-only)
+- **Owner:** Leader / Platform Team (via service-graph-engine)
+- **This repo's role:** Consumer via HTTP API
 - **Copilot must NOT:**
   - Propose schema changes
-  - Assume schema details without evidence
-  - Add schema modification queries
+  - Assume schema details without evidence from Graph Engine API documentation
+  - Invent Graph Engine endpoints
 
-**Important:** Any schema knowledge present in this repo (e.g., snippets in docs or comments) does not equal ownership. This repo consumes the schema; it does not define it.
+**Important:** This repo consumes graph data via HTTP API; it does not define the schema or data model.
 
 ### Metrics Source/Collection Architecture
 
@@ -33,12 +33,12 @@ Copilot must assume the following are **NOT owned by this repo**:
   - Propose changes to metrics collection
   - Assume metrics availability without evidence
 
-### Graph API Service
+### Graph Engine API Service
 
-- **Owner:** Leader / Platform Team
-- **This repo's role:** Client/consumer
+- **Owner:** Leader / Platform Team (service-graph-engine)
+- **This repo's role:** HTTP client/consumer
 - **Copilot must NOT:**
-  - Invent Graph API endpoints
+  - Invent Graph Engine API endpoints
   - Invent request/response shapes
   - Assume contract details without documentation
 
@@ -60,27 +60,21 @@ Copilot must assume the following are **NOT owned by this repo**:
 | `POST /simulate/failure` | This repo |
 | `POST /simulate/scale` | This repo |
 
-### Graph API Client Code
+### Graph Engine HTTP Client Code
 
-- Client-side consumption of leader's Graph API
+- Client-side consumption of Graph Engine API
 - Adapter patterns for graph data access
-- Fallback logic when Graph API unavailable
-
-### Neo4j Read-Only Fallback
-
-- Read-only queries as fallback
-- Query timeout enforcement
-- Credential redaction
+- Error handling when Graph Engine unavailable (return 503)
 
 ---
 
 ## Decision Matrix
 
-| Need | First Choice | Fallback | Copilot Action |
-|------|--------------|----------|----------------|
-| Graph topology | Graph API | Neo4j read-only | Ask for Graph API contract first |
+| Need | Data Source | Fallback | Copilot Action |
+|------|-------------|----------|----------------|
+| Graph topology | Graph Engine API | None (return 503) | Use GraphEngineHttpProvider |
 | Schema details | Ask leader | Evidence in repo | Never assume |
-| Metrics data | Graph API | None | Do not access Prometheus directly |
+| Metrics data | Graph Engine API | None (return 503) | Do not access Prometheus directly |
 | New endpoint | This repo | N/A | Plan and implement per rules |
 
 ---
@@ -95,4 +89,4 @@ If Copilot is asked to cross a boundary, it must:
 
 **Example response:**
 
-> "This request touches Neo4j schema, which is leader-owned (see `01-ownership-boundaries.md`). Copilot cannot proceed without explicit user approval to cross this boundary."
+> "This request touches Graph Engine schema, which is leader-owned (see `01-ownership-boundaries.md`). Copilot cannot proceed without explicit user approval to cross this boundary."

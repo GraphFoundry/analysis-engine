@@ -161,18 +161,7 @@ describe('GraphEngineClient.checkGraphHealth', () => {
         delete require.cache[require.resolve('../src/graphEngineClient')];
     });
 
-    test('returns error when graph API is disabled', async () => {
-        process.env.USE_GRAPH_ENGINE_API = 'false';
-        
-        const { checkGraphHealth } = require('../src/graphEngineClient');
-        
-        const result = await checkGraphHealth();
-        
-        assert.strictEqual(result.ok, false);
-        assert.strictEqual(result.error, 'Graph API is disabled');
-    });
-
-    test('returns health data when enabled and API responds', async () => {
+    test('returns health data when API responds', async () => {
         const responseData = { status: 'OK', stale: false, lastUpdatedSecondsAgo: 45, windowMinutes: 5 };
         
         const mock = await createMockServer((req, res) => {
@@ -186,7 +175,6 @@ describe('GraphEngineClient.checkGraphHealth', () => {
         });
         mockServer = mock.server;
 
-        process.env.USE_GRAPH_ENGINE_API = 'true';
         process.env.SERVICE_GRAPH_ENGINE_URL = mock.url;
         
         const { checkGraphHealth } = require('../src/graphEngineClient');
@@ -221,29 +209,7 @@ describe('/health endpoint graphApi field', () => {
         const config = require('../src/config');
         
         assert.strictEqual(typeof config.graphApi, 'object', 'graphApi should be an object');
-        assert.strictEqual(typeof config.graphApi.enabled, 'boolean', 'enabled should be boolean');
         assert.strictEqual(typeof config.graphApi.timeoutMs, 'number', 'timeoutMs should be number');
-        assert.strictEqual(typeof config.graphApi.required, 'boolean', 'required should be boolean');
-    });
-
-    test('config.graphApi.enabled is true when USE_GRAPH_ENGINE_API=true', () => {
-        delete require.cache[require.resolve('../src/config')];
-        process.env.USE_GRAPH_ENGINE_API = 'true';
-        process.env.SERVICE_GRAPH_ENGINE_URL = 'http://localhost:3000';
-        
-        const config = require('../src/config');
-        
-        assert.strictEqual(config.graphApi.enabled, true);
-        assert.strictEqual(config.graphApi.baseUrl, 'http://localhost:3000');
-    });
-
-    test('config.graphApi.required is true when REQUIRE_GRAPH_API=true', () => {
-        delete require.cache[require.resolve('../src/config')];
-        process.env.REQUIRE_GRAPH_API = 'true';
-        
-        const config = require('../src/config');
-        
-        assert.strictEqual(config.graphApi.required, true);
     });
 });
 
@@ -272,18 +238,6 @@ describe('getCentralityTop', () => {
         Object.assign(process.env, originalEnv);
         delete require.cache[require.resolve('../src/config')];
         delete require.cache[require.resolve('../src/graphEngineClient')];
-    });
-
-    test('returns error when graph API is disabled', async () => {
-        delete require.cache[require.resolve('../src/config')];
-        delete require.cache[require.resolve('../src/graphEngineClient')];
-        process.env.USE_GRAPH_ENGINE_API = 'false';
-        
-        const { getCentralityTop } = require('../src/graphEngineClient');
-        const result = await getCentralityTop('pagerank', 5);
-        
-        assert.strictEqual(result.ok, false);
-        assert.ok(result.error.includes('disabled'));
     });
 
     test('returns error for invalid metric', async () => {

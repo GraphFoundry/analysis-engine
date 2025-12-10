@@ -87,17 +87,11 @@ class GraphEngineHttpProvider {
 
         if (stale) {
             const staleAge = lastUpdatedSecondsAgo === null ? 'age unknown' : `${lastUpdatedSecondsAgo}s old`;
-            if (config.graphApi.required) {
-                const err = new Error(
-                    `Graph data is stale (${staleAge}). Simulation aborted.`
-                );
-                err.statusCode = 503;
-                throw err;
-            } else {
-                console.warn(
-                    `[WARN] Graph data is stale (${staleAge}). Proceeding anyway.`
-                );
-            }
+            const err = new Error(
+                `Graph data is stale (${staleAge}). Simulation aborted.`
+            );
+            err.statusCode = 503;
+            throw err;
         }
 
         // Return freshness metadata for inclusion in snapshot

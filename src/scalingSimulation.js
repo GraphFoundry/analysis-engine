@@ -194,7 +194,7 @@ async function simulateScaling(request) {
         throw new Error('alpha must be between 0 and 1');
     }
     
-    // Fetch upstream neighborhood via provider (Neo4j or Graph API)
+    // Fetch upstream neighborhood via Graph Engine
     const provider = getProvider();
     const snapshot = await provider.fetchUpstreamNeighborhood(request.serviceId, maxDepth);
     

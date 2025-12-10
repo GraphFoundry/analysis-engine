@@ -4,7 +4,7 @@
 
 The Predictive Analysis Engine is a microservice observability tool that performs predictive impact analysis on service call graphs. It enables operators to simulate infrastructure changes—service failures and scaling operations—before executing them in production, thereby reducing risk and improving operational decision-making.
 
-This service integrates with the existing Neo4j-based service graph infrastructure (populated by `service-graph-engine`) to provide real-time predictive analysis capabilities.
+**Source of Truth:** This service uses the Graph Engine API as its single data source. All graph topology and metrics data is retrieved via HTTP from `service-graph-engine`.
 
 ## Architecture
 
@@ -17,51 +17,56 @@ This service integrates with the existing Neo4j-based service graph infrastructu
 └──────────┬──────────┘
            │
            ▼
-┌─────────────────────┐       ┌──────────────────┐
-│ service-graph-      │──────▶│ Neo4j            │
-│ engine              │       │ (Graph Database) │
-│ (Metric Ingestion)  │       └────────┬─────────┘
-└─────────────────────┘                │
-                                       │ READ-ONLY
-                                       ▼
-                            ┌──────────────────────┐
-                            │ predictive-analysis- │
-                            │ engine               │
-                            │ (This Service)       │
-                            └──────────┬───────────┘
-                                       │
-                                       ▼
-                            ┌──────────────────────┐
-                            │ REST API Consumers   │
-                            │ (Operators, UIs)     │
-                            └──────────────────────┘
+┌─────────────────────┐
+│ service-graph-      │
+│ engine              │◀──── HTTP/JSON
+│ (Graph Engine API)  │
+└──────────┬──────────┘
+           │
+           │ HTTP API
+           ▼
+┌──────────────────────┐
+│ predictive-analysis- │
+│ engine               │
+│ (This Service)       │
+└──────────┬───────────┘
+           │
+           ▼
+┌──────────────────────┐
+│ REST API Consumers   │
+│ (Operators, UIs)     │
+└──────────────────────┘
 ```
 
 ### Key Design Principles
 
-1. **Read-Only Analysis**: All Neo4j queries are read-only. Graph modifications exist only in-memory during simulation execution.
+1. **Graph Engine Only**: This service exclusively uses the Graph Engine HTTP API. No direct database access. Graph modifications exist only in-memory during simulation execution.
 
 2. **Configurable Defaults**: All simulation parameters (latency metrics, scaling formulas, traversal depth) are configurable via environment variables or per-request overrides.
 
 3. **Performance Bounded**: Hard limits on traversal depth (max 3 hops) and path enumeration (top N=10) prevent combinatorial explosion on large graphs.
 
-4. **Timeout Enforcement**: Two-layer timeout protection (Neo4j transaction timeout + overall request timeout) ensures fast failure detection.
+4. **Timeout Enforcement**: HTTP request timeouts ensure fast failure detection when Graph Engine is unavailable.
 
-## Graph Schema
+## Data Model
 
-The engine operates on the following Neo4j schema (managed by `service-graph-engine`):
+The engine consumes graph data from the Graph Engine API with the following structure:
 
-**Nodes:**
-- Label: `Service`
-- Properties: `serviceId` (unique), `name`, `namespace`, `createdAt`, `updatedAt`, `pagerank`, `betweenness`
+**Service Nodes:**
+- `serviceId` / `name`: Service identifier (plain name like "frontend")
+- `namespace`: Service namespace (typically "default")
 
-**Relationships:**
-- Type: `CALLS_NOW` (direction: caller → callee)
-- Properties: `rate`, `errorRate`, `p50`, `p95`, `p99`, `windowStart`, `windowEnd`, `lastUpdated`
+**Edges (Calls):**
+- `from` → `to`: Caller → callee direction
+- `rate`: Request rate (RPS from Prometheus metrics)
+- `errorRate`: Error rate (RPS)
+- `p50`, `p95`, `p99`: Latency percentiles (milliseconds)
 
-> **Note on Rate Units:** The `rate` property represents call frequency. The actual unit depends on your metrics source configuration (typically requests per second from Prometheus rate functions). The engine treats rates as unit-agnostic; interpret results according to your source metrics.
+> **Note:** The Graph Engine API provides plain service names (e.g., "frontend") rather than namespace-prefixed identifiers. This service handles both formats for backward compatibility.
 
-**ServiceId Format:** `"namespace:name"` (e.g., `"default:frontend"`)
+**Data Freshness:**
+- Graph Engine provides staleness indicators
+- Simulations abort if data is stale
 
 ## Configuration
 
@@ -69,20 +74,17 @@ All configuration is managed via environment variables with sensible defaults.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEO4J_URI` | `neo4j+s://...` | Neo4j connection URI |
-| `NEO4J_USER` | `neo4j` | Neo4j username |
-| `NEO4J_PASSWORD` | *(required)* | Neo4j password (never logged) |
+| `SERVICE_GRAPH_ENGINE_URL` | `http://service-graph-engine:3000` | Graph Engine API base URL |
+| `GRAPH_ENGINE_BASE_URL` | *(alias)* | Alternative name for SERVICE_GRAPH_ENGINE_URL |
+| `GRAPH_API_TIMEOUT_MS` | `5000` | Graph Engine HTTP request timeout (ms) |
 | `DEFAULT_LATENCY_METRIC` | `p95` | Default latency metric (p50, p95, p99) |
 | `MAX_TRAVERSAL_DEPTH` | `2` | Maximum k-hop traversal depth (1-3) |
 | `SCALING_MODEL` | `bounded_sqrt` | Scaling formula (bounded_sqrt, linear) |
 | `SCALING_ALPHA` | `0.5` | Fixed overhead fraction (0.0-1.0) |
 | `MIN_LATENCY_FACTOR` | `0.6` | Minimum latency improvement factor |
-| `TIMEOUT_MS` | `8000` | Query and request timeout (ms) |
+| `TIMEOUT_MS` | `8000` | Overall request timeout (ms) |
 | `MAX_PATHS_RETURNED` | `10` | Maximum paths in simulation results |
 | `PORT` | `7000` | HTTP server port |
-| `SERVICE_GRAPH_ENGINE_URL` | `http://localhost:3000` | Graph Engine API base URL |
-| `USE_GRAPH_ENGINE_API` | `true` | Enable Graph Engine API (preferred over Neo4j) |
-| `GRAPH_ENGINE_ONLY` | `false` | Strict mode: only use Graph Engine, no Neo4j fallback |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit sliding window (ms) |
 | `RATE_LIMIT_MAX_REQUESTS` | `60` | Max requests per window per client |
 
@@ -90,7 +92,7 @@ All configuration is managed via environment variables with sensible defaults.
 
 ```bash
 cp .env.example .env
-# Edit .env with your Neo4j credentials
+# Edit .env with your Graph Engine URL
 ```
 
 ## API Reference
@@ -103,17 +105,23 @@ cp .env.example .env
 ```json
 {
   "status": "ok",
-  "neo4j": {
+  "provider": "graph-engine",
+  "graphApi": {
     "connected": true,
-    "services": 11
+    "status": "healthy",
+    "stale": false,
+    "lastUpdatedSecondsAgo": 12
   },
-  "uptime": 42.3
+  "config": {
+    "maxTraversalDepth": 2,
+    "defaultLatencyMetric": "p95"
+  },
+  "uptimeSeconds": 42.3
 }
 ```
 
 **Status Codes:**
-- `200 OK`: Service healthy
-- `500 Internal Server Error`: Service error
+- `200 OK`: Always (even when degraded)
 
 ---
 
@@ -491,21 +499,6 @@ All logs are output in JSON format for easy parsing:
 }
 ```
 
-### Graph-Engine-Only Mode
-
-For deployments that exclusively use the Graph Engine API (no Neo4j):
-
-```bash
-GRAPH_ENGINE_ONLY=true
-USE_GRAPH_ENGINE_API=true
-SERVICE_GRAPH_ENGINE_URL=http://graph-engine:3000
-```
-
-In this mode:
-- Neo4j credentials are not required
-- Application fails fast if Graph Engine is unavailable
-- No fallback to Neo4j
-
 ---
 
 ## Evaluation Harness
@@ -737,7 +730,7 @@ curl -X POST http://localhost:7000/simulate/scale \
 ### Prerequisites
 
 - Node.js >= 18.x
-- Neo4j database (populated by `service-graph-engine`)
+- Access to `service-graph-engine` HTTP API
 
 ### Installation
 
@@ -749,7 +742,7 @@ npm install
 
 ```bash
 cp .env.example .env
-# Edit .env with your Neo4j credentials
+# Edit .env with your Graph Engine URL (default: http://service-graph-engine:3000)
 ```
 
 ### Start Server
@@ -780,11 +773,12 @@ curl http://localhost:7000/health
 ```json
 {
   "status": "ok",
-  "neo4j": {
+  "provider": "graph-engine",
+  "graphApi": {
     "connected": true,
-    "services": 11
+    "status": "healthy"
   },
-  "uptime": 5.2
+  "uptimeSeconds": 5.2
 }
 ```
 
@@ -802,10 +796,10 @@ npm test
 
 ## Security Considerations
 
-1. **Credential Management**: Neo4j password is never logged (redacted in all error messages)
-2. **Read-Only Access**: All Neo4j queries use `READ` access mode
-3. **Input Validation**: All user inputs validated before use
-4. **Timeout Protection**: Prevents resource exhaustion from expensive queries
+1. **HTTP Only**: All data access via Graph Engine HTTP API (no direct database access)
+2. **Input Validation**: All user inputs validated before use
+3. **Timeout Protection**: Prevents resource exhaustion from expensive Graph Engine queries
+4. **Rate Limiting**: Simulation endpoints protected against abuse
 
 ---
 
@@ -831,14 +825,16 @@ npm test
 
 ### With service-graph-engine
 
-- **Dependency**: Reads same Neo4j graph (Services + CALLS_NOW edges)
-- **Schema**: Assumes schema managed by `service-graph-engine`
-- **No coordination required**: Both services are read-only consumers
+- **Dependency**: Consumes Graph Engine HTTP API for topology and metrics
+- **Endpoints Used**:
+  - `GET /graph/health` - Data freshness status
+  - `GET /services/{name}/neighborhood?k={depth}` - k-hop neighborhood
+- **No coordination required**: Graph Engine provides read-only data access
 
 ### With Other Components
 
-- **REST API**: Standard HTTP JSON (no authentication in Progress 1)
-- **Service Identifier**: Accepts both `serviceId` and `name`+`namespace` formats
+- **REST API**: Standard HTTP JSON (no authentication in current version)
+- **Service Identifier**: Accepts plain service names (e.g., "frontend")
 - **Extensible**: Response format includes detailed metadata for downstream processing
 
 ---
@@ -868,19 +864,18 @@ Check `/health` endpoint for service count.
 **Solution:**
 1. Reduce `maxDepth` in request (try 1 instead of 2)
 2. Increase `TIMEOUT_MS` in `.env` (if graph is legitimately large)
+3. Check Graph Engine performance
 
 ---
 
-### Error: "Neo4j connection failed"
+### Error: "Graph API unavailable"
 
-**Cause:** Invalid credentials or unreachable database
+**Cause:** Cannot reach Graph Engine or it returned an error
 
-**Solution:** Verify Neo4j credentials in `.env`:
-
-```bash
-# Test connection
-node verify-schema.js
-```
+**Solution:** 
+1. Verify Graph Engine is running: `curl http://service-graph-engine:3000/health`
+2. Check `SERVICE_GRAPH_ENGINE_URL` in `.env`
+3. Review Graph Engine logs
 
 ---
 

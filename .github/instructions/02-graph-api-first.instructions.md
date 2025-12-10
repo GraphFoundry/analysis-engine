@@ -1,61 +1,74 @@
 ---
-applyTo: "**/graph.js,**/api/**/*.js,src/**/*.js"
-description: 'Graph API must be preferred over direct Neo4j access - use Neo4j only as fallback'
+applyTo: "**/graphEngineClient.js,**/providers/**/*.js,src/**/*.js"
+description: 'Graph Engine API is the single source of truth - no fallback to Neo4j'
 ---
 
-# Graph API First Policy
+# Graph Engine API Only Policy
 
-When Copilot needs graph or topology data, it must prefer the leader's Graph API over direct Neo4j access.
+This repository uses Graph Engine API as the **single source of truth** for all graph and topology data.
 
 ---
 
-## Decision Hierarchy
+## Non-Negotiable Rules
 
 ```
-1. Graph API (preferred)
-       ↓ (only if unavailable or missing capability)
-2. Neo4j read-only fallback
+Graph Engine API → ONLY data source
+       ↓
+No fallback → Return 503 if unavailable
 ```
 
 ---
 
-## When to Use Graph API
+## When to Use Graph Engine API
 
-Copilot must use Graph API when:
+Copilot must use Graph Engine API for:
 
 - Fetching service topology
 - Retrieving edge metrics (rate, latency, error rate)
 - Getting node properties (serviceId, name, namespace)
 - Any graph traversal operation
+- Health checks and data freshness
+
+**There is no alternative data source.**
 
 ---
 
-## When Neo4j Fallback is Allowed
+## Error Handling
 
-Copilot may use Neo4j read-only access only when:
+When Graph Engine API is unavailable:
 
-1. **Graph API is missing the required capability** — Document which capability is missing
-2. **Graph API is unavailable** — Temporary outage or not deployed
-3. **User explicitly requests Neo4j usage** — Must be documented in plan
+1. **Return HTTP 503** with clear error message
+2. **Include error code**: `GRAPH_ENGINE_UNAVAILABLE`
+3. **Do NOT** attempt fallback logic
+4. **Log** the failure with correlation ID
+
+**Example error response:**
+```json
+{
+  "code": "GRAPH_ENGINE_UNAVAILABLE",
+  "message": "Graph Engine API is unavailable. Cannot perform simulation.",
+  "timeoutMs": 5000
+}
+```
 
 ---
 
 ## Contract Discipline
 
-### Before Implementing Graph API Client
+### Before Implementing Graph Engine Client Calls
 
 Copilot must verify:
 
-- [ ] Contract document exists in repo OR user has provided it
-- [ ] Endpoint URL pattern is documented
+- [ ] Endpoint exists in `src/graphEngineClient.js` OR is documented
 - [ ] Request format is documented
 - [ ] Response format is documented
+- [ ] Error cases are handled (404, 503, timeout)
 
 ### If Contract is Missing
 
 Copilot must **STOP** and ask:
 
-> "The Graph API contract for [operation] is not documented in this repo. Please provide the contract (endpoint, request/response format) or confirm that Neo4j fallback should be used."
+> "The Graph Engine API contract for [operation] is not documented. Please provide the contract (endpoint, request/response format)."
 
 ### Never Invent
 
@@ -65,6 +78,7 @@ Copilot must **NEVER**:
 - Make up request body shapes
 - Make up response structures
 - Assume authentication patterns
+- Add fallback logic to Neo4j or any other data source
 
 ---
 
@@ -72,10 +86,9 @@ Copilot must **NEVER**:
 
 ### Required Environment Variable
 
-When Graph API mode is enabled, require:
-
 ```bash
-GRAPH_API_BASE_URL=http://graph-api-service:8080
+SERVICE_GRAPH_ENGINE_URL=http://service-graph-engine:3000
+# or: GRAPH_ENGINE_BASE_URL=http://service-graph-engine:3000
 ```
 
 ### Configuration Pattern
@@ -83,9 +96,9 @@ GRAPH_API_BASE_URL=http://graph-api-service:8080
 ```javascript
 // Example: config.js
 graphApi: {
-    baseUrl: process.env.GRAPH_API_BASE_URL,
-    enabled: !!process.env.GRAPH_API_BASE_URL,
-    timeoutMs: parseInt(process.env.GRAPH_API_TIMEOUT_MS) || 5000
+    baseUrl: process.env.SERVICE_GRAPH_ENGINE_URL || process.env.GRAPH_ENGINE_BASE_URL,
+    timeoutMs: parseInt(process.env.GRAPH_API_TIMEOUT_MS) || 5000,
+    required: process.env.REQUIRE_GRAPH_API !== 'false' // Default true
 }
 ```
 
@@ -93,20 +106,55 @@ graphApi: {
 
 ## Implementation Pattern
 
-When implementing Graph API consumption:
+When implementing Graph Engine API consumption:
 
 ```javascript
-// Preferred: Graph API client with fallback
+// Graph Engine only - no fallback
 async function getServiceTopology(serviceId) {
-    if (config.graphApi.enabled) {
-        return await graphApiClient.getTopology(serviceId);
+    try {
+        return await graphEngineClient.getNeighborhood(serviceId, maxDepth);
+    } catch (error) {
+        // Return 503 if Graph Engine unavailable
+        if (error.statusCode === 503 || error.message.includes('unavailable')) {
+            throw new ServiceUnavailableError('Graph Engine API unavailable');
+        }
+        throw error;
     }
-    
-    // Fallback: Neo4j read-only (document why)
-    console.log('Graph API unavailable, using Neo4j fallback');
-    return await neo4jFallback.getTopology(serviceId);
 }
 ```
+
+---
+
+## Blocked Patterns
+
+**DO NOT** implement these patterns:
+
+```javascript
+// ❌ WRONG: Fallback logic
+if (graphApiAvailable) {
+    return await graphApi.get();
+} else {
+    return await neo4j.query();
+}
+
+// ❌ WRONG: Dual mode
+const provider = config.useGraphApi ? graphProvider : neo4jProvider;
+
+// ✅ CORRECT: Graph Engine only
+const provider = new GraphEngineHttpProvider();
+```
+
+---
+
+## Verification Checklist
+
+Before merging Graph Engine client code, verify:
+
+- [ ] No Neo4j imports in same file
+- [ ] No fallback logic present
+- [ ] Error handling returns 503 when Graph Engine unavailable
+- [ ] Environment variable `SERVICE_GRAPH_ENGINE_URL` is required
+- [ ] Tests mock Graph Engine responses (not Neo4j)
 
 ---
 

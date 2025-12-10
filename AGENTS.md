@@ -11,13 +11,13 @@ This file provides universal agent instructions compatible with GitHub Copilot c
 **Tech Stack:**
 - **Runtime:** Node.js (CommonJS)
 - **Framework:** Express.js
-- **Database:** Neo4j (read-only access)
-- **External Dependency:** Graph API (leader-owned, consumed via HTTP)
+- **Data Source:** Graph Engine HTTP API (service-graph-engine)
+- **External Dependency:** Graph API consumed via HTTP
 
 **Key Files:**
 - `index.js` — Main entry point, Express server setup
-- `src/graph.js` — Graph API client consumption
-- `src/neo4j.js` — Neo4j read-only fallback with credential redaction
+- `src/graphEngineClient.js` — Graph Engine HTTP client
+- `src/providers/GraphEngineHttpProvider.js` — Graph data provider
 - `src/failureSimulation.js` — Failure scenario simulation logic
 - `src/scalingSimulation.js` — Scaling scenario simulation logic
 - `src/config.js` — Environment configuration
@@ -44,23 +44,15 @@ npm test
 ```
 Uses Node.js built-in test runner.
 
-### Verify Neo4j Schema (Read-only)
-```bash
-npm run verify
-```
-
 ### Environment Variables Required
 ```bash
 # Required
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=<password>
-
-# Optional (Graph API mode)
-GRAPH_API_BASE_URL=http://graph-api:8080
+SERVICE_GRAPH_ENGINE_URL=http://service-graph-engine:3000
+# or: GRAPH_ENGINE_BASE_URL=http://service-graph-engine:3000
 
 # Optional
-PORT=3000
+PORT=7000
+GRAPH_API_TIMEOUT_MS=5000
 ```
 
 ---
@@ -68,10 +60,8 @@ PORT=3000
 ## Boundaries (Critical)
 
 ### ✅ ALWAYS DO
-- Use read-only Neo4j queries (`defaultAccessMode: neo4j.session.READ`)
-- Prefer Graph API over direct Neo4j access
+- Use Graph Engine HTTP API for all graph data access
 - Follow the plan-first workflow: inventory → plan → questions → wait for approval
-- Redact credentials in logs (use `redactCredentials()` from `src/neo4j.js`)
 - Provide evidence (file path + snippet) when stating facts
 - **Add/update tests** for behavioral changes when test framework exists (see Testing Policy in `.github/copilot-instructions.md`)
 - **Update relevant docs** when behavior/config/API changes
@@ -84,8 +74,6 @@ PORT=3000
 - Before adding new dependencies
 
 ### 🚫 NEVER DO
-- Write to Neo4j (all queries must be read-only)
-- Modify Neo4j schema
 - Add CI/CD workflows (`.github/workflows/*`)
 - Add or modify tests without explicit approval
 - Log secrets, passwords, or connection strings
@@ -97,21 +85,14 @@ PORT=3000
 ## Architecture
 
 ```
-┌─────────────────┐     ┌──────────────┐     ┌─────────────┐
-│   HTTP Client   │────▶│  Express API │────▶│  Graph API  │ (preferred)
-└─────────────────┘     └──────────────┘     └─────────────┘
-                              │
-                              │ fallback only
-                              ▼
-                        ┌─────────────┐
-                        │   Neo4j     │ (read-only)
-                        │  (fallback) │
-                        └─────────────┘
+┌─────────────────┐     ┌─────────────────┐
+│   HTTP Client   │────▶│  Express API  │────▶│  Graph Engine  │
+└─────────────────┘     └─────────────────┘     │  HTTP API      │
+                                         └─────────────────┘
 ```
 
 ### Data Flow Priority
-1. **Graph API** — Always try first (leader-owned service)
-2. **Neo4j** — Fallback only when Graph API unavailable or missing capability
+1. **Graph Engine API** — Single source of truth for topology and metrics
 
 ---
 
@@ -124,8 +105,11 @@ PORT=3000
 │   ├── config.js            # Environment configuration
 │   ├── failureSimulation.js # Failure scenario logic
 │   ├── scalingSimulation.js # Scaling scenario logic
-│   ├── graph.js             # Graph API client
-│   ├── neo4j.js             # Neo4j read-only client + redaction
+│   ├── graphEngineClient.js # Graph Engine HTTP client
+│   ├── providers/           # Graph data provider layer
+│   │   ├── GraphDataProvider.js
+│   │   ├── GraphEngineHttpProvider.js
+│   │   └── index.js
 │   └── validator.js         # Request validation
 ├── .github/
 │   ├── copilot-instructions.md  # Master Copilot instruction file
@@ -137,7 +121,6 @@ PORT=3000
 │   │   ├── 01-plan-change.prompt.md
 │   │   ├── 02-implement-approved-plan.prompt.md
 │   │   ├── 03-graph-api-consumer.prompt.md
-│   │   ├── 04-neo4j-fallback.prompt.md
 │   │   ├── 05-add-or-change-endpoint.prompt.md
 │   │   ├── 06-docs-update.prompt.md
 │   │   └── 07-pr-summary.prompt.md
@@ -145,16 +128,14 @@ PORT=3000
 │   │   ├── 00-operating-rules.instructions.md
 │   │   ├── 01-ownership-boundaries.instructions.md
 │   │   ├── 02-graph-api-first.instructions.md
-│   │   ├── 03-neo4j-readonly-fallback.instructions.md
 │   │   ├── 04-errors-logging-secrets.instructions.md
 │   │   └── 05-k8s-minikube-scope.instructions.md
 │   └── skills/
 │       ├── graph-api-client/SKILL.md
 │       ├── k8s-deployment/SKILL.md
-│       ├── neo4j-readonly/SKILL.md
 │       └── simulation-runner/SKILL.md
 ├── k8s/
-│   └── base/                # Kubernetes manifests
+│   └── (removed - not needed)
 ├── test/
 │   └── simulation.test.js   # Test file
 └── docs/

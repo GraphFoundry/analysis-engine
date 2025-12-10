@@ -93,9 +93,9 @@ This repository maintains an OpenAPI 3.0 specification (`openapi.yaml`) that doc
 
 Copilot must assume the following are **NOT owned by this repo** (do not change assumptions without explicit user instruction):
 
-- Neo4j schema design / schema evolution
+- Graph Engine schema design / schema evolution
 - metrics source/collection architecture (Prometheus/Grafana/Kiali stack)
-- "Graph API" service implementation and contract ownership (leader/team owns it)
+- "Graph Engine API" service implementation and contract ownership (leader/team owns it)
 
 ### 1.2 This repo-owned
 
@@ -103,66 +103,33 @@ This repo owns:
 
 - predictive analysis logic
 - its own HTTP API (endpoints exposed by this service)
-- client-side consumption of leader's Graph API
-- optional **read-only** Neo4j access as a fallback ONLY
+- client-side consumption of Graph Engine API
 
 ---
 
-## 2) Graph API First Policy (Must follow)
+## 2) Graph Engine API Policy (Must follow)
 
-### 2.1 Default decision
+### 2.1 Single source of truth
 
-When Copilot needs graph/topology data:
+Graph Engine API is the **only** data source for graph/topology data:
 
-1. **Use leader's Graph API** (preferred)
-2. Use Neo4j **read-only fallback** only if:
-   - Graph API is missing the required capability, OR
-   - Graph API is unavailable, OR
-   - the user explicitly requests Neo4j usage
-
-### 2.2 Contract discipline
-
-If consuming Graph API:
-
-- Copilot must not invent endpoints.
-- Copilot must not invent request/response shapes.
-- If the contract isn't documented in repo, Copilot must ask for it OR point out the missing contract.
-- Require env var `GRAPH_API_BASE_URL` when Graph API mode is enabled.
+1. **Use Graph Engine API** for all graph data needs
+2. **No fallback** — if Graph Engine is unavailable, return 503 with clear error
+3. Require env var `SERVICE_GRAPH_ENGINE_URL` or `GRAPH_ENGINE_BASE_URL`
 
 ---
 
-## 3) Neo4j Fallback Policy (Read-only + minimal coupling)
-
-### 3.1 Runtime queries
-
-All runtime Neo4j queries in this repo must be **read-only**. The codebase enforces this via `defaultAccessMode: neo4j.session.READ`.
-
-### 3.2 Schema/write queries
-
-If any schema or write queries exist in the codebase (legacy or validation), they are **not to be touched or expanded** without explicit leader approval.
-
-**Hard rule:** Copilot must never introduce or modify Neo4j write/schema logic unless the user explicitly approves.
-
-### 3.3 Fallback constraints
-
-- Do not assume schema details unless evidenced by a snippet in this repo.
-- Prefer "data access adapter" patterns so simulation logic doesn't couple to raw Cypher.
-- Existing safeguards (two-layer timeout, credential redaction) must be preserved.
-
----
-
-## 4) Security & Logging Rules (Hard rules)
+## 3) Security & Logging Rules (Hard rules)
 
 - Never print secrets (passwords, tokens, connection strings) to logs.
-- The repo has a `redactCredentials()` function in `src/neo4j.js` — follow this pattern.
 - Do not hardcode credentials or endpoints.
 - Treat env vars + K8s secrets as the only acceptable secret sources unless user says otherwise.
 
 ---
 
-## 5) Working Style (How Copilot must behave)
+## 4) Working Style (How Copilot must behave)
 
-### 5.1 Plan-first workflow (Always)
+### 4.1 Plan-first workflow (Always)
 
 Every task must follow this sequence:
 
@@ -173,7 +140,7 @@ Every task must follow this sequence:
 5. **Implement** (only after approval) in small, reversible changes
 6. **Summarize**: what changed + manual verification steps + docs touched
 
-### 5.2 Minimal questions, maximum signal
+### 4.2 Minimal questions, maximum signal
 
 Keep questions minimal and practical. Ask questions only when:
 
@@ -181,7 +148,7 @@ Keep questions minimal and practical. Ask questions only when:
 - boundaries are unclear
 - implementation choices would materially change behavior
 
-### 5.3 Avoid "progress chatter"
+### 4.3 Avoid "progress chatter"
 
 Copilot must not output filler like "Now I will inspect…". Only output:
 
@@ -192,7 +159,7 @@ Copilot must not output filler like "Now I will inspect…". Only output:
 
 ---
 
-## 6) Output Format Requirements (Always follow)
+## 5) Output Format Requirements (Always follow)
 
 When responding, Copilot must use this exact structure:
 
@@ -217,15 +184,15 @@ When responding, Copilot must use this exact structure:
 
 ---
 
-## 7) What Copilot is currently expected to build in this repo
+## 6) What Copilot is currently expected to build in this repo
 
 Unless user overrides, the default deliverable is a `.github` pack containing:
 
 - `.github/copilot-instructions.md` (this file)
 - `.github/agents/`: `planner.md`, `implementer.md`, `reviewer.md`
-- `.github/instructions/`: operating rules, ownership, Graph API policy, Neo4j fallback, errors/logging, K8s scope
+- `.github/instructions/`: operating rules, ownership, Graph API policy, errors/logging, K8s scope
 - `.github/prompts/`: reusable workflow prompts
-- `.github/skills/`: Agent Skills for specialized workflows (neo4j-readonly, graph-api-client, simulation-runner, k8s-deployment)
+- `.github/skills/`: Agent Skills for specialized workflows (graph-api-client, simulation-runner, k8s-deployment)
 
 **Also see:**
 - `AGENTS.md` (root): Universal agent instructions compatible with any AI agent
@@ -234,7 +201,7 @@ Unless user overrides, the default deliverable is a `.github` pack containing:
 
 ---
 
-## 8) Definition of "Done"
+## 7) Definition of "Done"
 
 A task is done only when:
 

@@ -25,66 +25,52 @@ k8s/
 
 ## Supported Profiles
 
-### Profile A: AuraDB Remote
+### Profile A: Remote Graph Engine
 
-- **Neo4j:** Cloud-hosted (Neo4j AuraDB)
-- **Credentials:** Provided via K8s secrets
+- **Graph Engine:** Cloud-hosted or remote cluster
+- **Connection:** HTTP URL via environment variable
 - **Use case:** Production-like, staging environments
 
 ```yaml
-# K8s secret for AuraDB
-NEO4J_URI: neo4j+s://xxxx.databases.neo4j.io
-NEO4J_USER: neo4j
-NEO4J_PASSWORD: <aura-password>
+# Environment config
+SERVICE_GRAPH_ENGINE_URL: http://service-graph-engine.production.svc.cluster.local:8080
 ```
 
-### Profile B: Local Neo4j (Minikube)
+### Profile B: Local Graph Engine (Minikube)
 
-- **Neo4j:** Local instance in Minikube
-- **Credentials:** Local dev credentials
+- **Graph Engine:** Local instance in Minikube
+- **Connection:** Local cluster DNS
 - **Use case:** Local development, testing
 
 ```yaml
-# K8s secret for local Neo4j
-NEO4J_URI: bolt://neo4j:7687
-NEO4J_USER: neo4j
-NEO4J_PASSWORD: <local-password>
+# Environment config for local
+SERVICE_GRAPH_ENGINE_URL: http://service-graph-engine:8080
 ```
 
 ---
 
-## Secret Management
+## Configuration Management
 
 ### Pattern (from deployment.yaml)
 
 ```yaml
 env:
-  - name: NEO4J_URI
-    valueFrom:
-      secretKeyRef:
-        name: neo4j-credentials
-        key: NEO4J_URI
-  - name: NEO4J_PASSWORD
-    valueFrom:
-      secretKeyRef:
-        name: neo4j-credentials
-        key: NEO4J_PASSWORD
+  - name: SERVICE_GRAPH_ENGINE_URL
+    value: "http://service-graph-engine:8080"
+  - name: GRAPH_ENGINE_TIMEOUT_MS
+    value: "5000"
 ```
 
-### Creating Secrets
+### Using ConfigMap (alternative)
 
 ```bash
-# For AuraDB
-kubectl create secret generic neo4j-credentials \
-  --from-literal=NEO4J_URI='neo4j+s://xxxx.databases.neo4j.io' \
-  --from-literal=NEO4J_USER='neo4j' \
-  --from-literal=NEO4J_PASSWORD='your-password'
+# For production
+kubectl create configmap predictive-engine-config \
+  --from-literal=SERVICE_GRAPH_ENGINE_URL='http://service-graph-engine.production.svc.cluster.local:8080'
 
-# For local Neo4j
-kubectl create secret generic neo4j-credentials \
-  --from-literal=NEO4J_URI='bolt://neo4j:7687' \
-  --from-literal=NEO4J_USER='neo4j' \
-  --from-literal=NEO4J_PASSWORD='local-password'
+# For local development
+kubectl create configmap predictive-engine-config \
+  --from-literal=SERVICE_GRAPH_ENGINE_URL='http://service-graph-engine:8080'
 ```
 
 ---
@@ -173,10 +159,10 @@ For local development without K8s:
 # 1. Copy .env.example to .env
 cp .env.example .env
 
-# 2. Fill in credentials
-# NEO4J_URI=neo4j+s://... (AuraDB)
+# 2. Configure Graph Engine URL
+# SERVICE_GRAPH_ENGINE_URL=http://localhost:8080 (local)
 # OR
-# NEO4J_URI=bolt://localhost:7687 (local Neo4j)
+# SERVICE_GRAPH_ENGINE_URL=http://service-graph-engine.production:8080 (remote)
 
 # 3. Start server
 npm start
@@ -186,8 +172,8 @@ npm start
 
 ## Quick Reference
 
-| Environment | Neo4j URI Pattern | Secret Source |
-|-------------|-------------------|---------------|
-| Local dev | .env file | .env |
-| Minikube | bolt://neo4j:7687 | K8s secret |
-| AuraDB | neo4j+s://xxx.databases.neo4j.io | K8s secret |
+| Environment | Graph Engine URL Pattern | Config Source |
+|-------------|--------------------------|---------------|
+| Local dev | http://localhost:8080 | .env file |
+| Minikube | http://service-graph-engine:8080 | ConfigMap or env |
+| Production | http://service-graph-engine.prod:8080 | ConfigMap or env |

@@ -23,25 +23,25 @@ This document governs how Copilot must handle errors, logging, and secrets.
 
 ```javascript
 // ✅ Environment variables
-const password = process.env.NEO4J_PASSWORD;
+const apiKey = process.env.GRAPH_ENGINE_API_KEY;
 
 // ✅ K8s secrets via env injection
 // (defined in deployment.yaml, not in code)
 env:
-  - name: NEO4J_PASSWORD
+  - name: GRAPH_ENGINE_API_KEY
     valueFrom:
       secretKeyRef:
-        name: neo4j-credentials
-        key: NEO4J_PASSWORD
+        name: graph-engine-credentials
+        key: API_KEY
 ```
 
 ### Forbidden Patterns
 
 ```javascript
 // ❌ NEVER do this
-const password = 'my-secret-password';
-const uri = 'neo4j+s://user:password@host:port';
-console.log('Connecting with password:', password);
+const apiKey = 'sk-1234567890abcdef';
+const url = 'https://api.example.com?key=secret-key-here';
+console.log('Connecting with API key:', apiKey);
 ```
 
 ---
@@ -50,15 +50,18 @@ console.log('Connecting with password:', password);
 
 The repo has a `redactCredentials()` function. Copilot must use this pattern.
 
-### Existing Implementation
+### Credential Redaction Pattern
+
+When logging errors that may contain sensitive data:
 
 ```javascript
-// From src/neo4j.js — USE THIS PATTERN
-function redactCredentials(message) {
+// Generic pattern for redacting credentials
+function redactSensitiveData(message) {
     if (!message) return message;
     return message
-        .replace(new RegExp(config.neo4j.password, 'g'), '[REDACTED]')
-        .replace(/password=([^&\s]+)/gi, 'password=[REDACTED]');
+        .replace(/password=([^&\s]+)/gi, 'password=[REDACTED]')
+        .replace(/apikey=([^&\s]+)/gi, 'apikey=[REDACTED]')
+        .replace(/token=([^&\s]+)/gi, 'token=[REDACTED]');
 }
 ```
 
@@ -124,9 +127,9 @@ if (error.message.includes('not found')) {
 
 | Category | Reason |
 |----------|--------|
-| Passwords | Security violation |
+| Passwords / API keys | Security violation |
 | Full connection strings | May contain credentials |
-| Raw Neo4j errors | May contain credentials |
+| Raw error messages from external services | May contain sensitive data |
 | Request bodies with secrets | Security violation |
 
 ### Log Format
@@ -136,7 +139,7 @@ if (error.message.includes('not found')) {
 console.log(`Simulation request: serviceId=${serviceId}, maxDepth=${maxDepth}`);
 
 // ❌ Bad: Contains potential secrets
-console.log('Neo4j config:', config.neo4j);
+console.log('Full config object:', config);
 ```
 
 ---
@@ -155,8 +158,8 @@ Never log:
 
 ```javascript
 // ❌ NEVER
-console.log(`Neo4j password: ${config.neo4j.password}`);
-console.log(`Neo4j config:`, config.neo4j);
+console.log(`API key: ${config.apiKey}`);
+console.log(`Full config with secrets:`, config);
 ```
 
 ---

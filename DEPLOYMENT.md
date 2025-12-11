@@ -18,8 +18,8 @@ The service DNS name changes from `predictive-analysis-engine.<namespace>.svc.cl
 ### Prerequisites
 
 - Node.js >= 18.x
-- Neo4j AuraDB instance (populated by `service-graph-engine`)
-- Neo4j credentials (URI + password)
+- Running `service-graph-engine` instance (Graph Engine API)
+- Graph Engine API URL configured
 
 ### Setup
 
@@ -30,8 +30,8 @@ npm install
 # 2. Configure environment
 cp .env.example .env
 
-# 3. Edit .env with your Neo4j credentials
-#    Required: NEO4J_URI, NEO4J_PASSWORD
+# 3. Edit .env with Graph Engine API URL
+#    Required: SERVICE_GRAPH_ENGINE_URL
 ```
 
 ### Start Server
@@ -60,7 +60,8 @@ curl http://localhost:7000/health
 ```json
 {
   "status": "ok",
-  "neo4j": {
+  "dataSource": "graph-engine",
+  "provider": {
     "connected": true,
     "services": 11
   },
@@ -174,19 +175,18 @@ curl -X POST http://localhost:7000/simulate/scale \
 
 ```
 ❌ Missing required environment variables:
-   - NEO4J_URI is required
-   - NEO4J_PASSWORD is required
+   - SERVICE_GRAPH_ENGINE_URL is required
 ```
 
-**Solution:** Ensure `.env` file exists with valid credentials.
+**Solution:** Ensure `.env` file exists with valid Graph Engine API URL.
 
 ### "Service not found"
 
-**Cause:** Target service doesn't exist in Neo4j graph.
+**Cause:** Target service doesn't exist in Graph Engine.
 
-**Solution:** Verify `service-graph-engine` has synced data:
+**Solution:** Verify `service-graph-engine` is running and has synced data:
 ```bash
-node verify-schema.js
+curl http://localhost:8080/health
 ```
 
 ### "Query timeout exceeded"
@@ -223,11 +223,9 @@ docker build -t predictive-analysis-engine:latest .
 ### Deploy to Cluster
 
 ```bash
-# Create secret first (example)
-kubectl create secret generic neo4j-credentials \
-  --from-literal=NEO4J_URI='neo4j+s://xxx.databases.neo4j.io' \
-  --from-literal=NEO4J_USER='neo4j' \
-  --from-literal=NEO4J_PASSWORD='your-password'
+# Create config (example - or use ConfigMap)
+kubectl set env deployment/predictive-analysis-engine \
+  SERVICE_GRAPH_ENGINE_URL='http://service-graph-engine:8080'
 
 # Apply manifests
 kubectl apply -k k8s/base/

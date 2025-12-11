@@ -5,9 +5,8 @@ info:
   description: |
     API for simulating failure and scaling scenarios in microservice call graphs.
     
-    **Data Sources:**
-    - Primary: Graph API (service-graph-engine)
-    - Fallback: Neo4j (read-only)
+    **Data Source:**
+    - Graph Engine API (service-graph-engine) - single source of truth for topology and metrics
     
     **Note:** Swagger UI is disabled by default. Set `ENABLE_SWAGGER=true` to enable.
   version: 1.0.0
@@ -444,7 +443,7 @@ components:
           enum: [ok, degraded, error]
         dataSource:
           type: string
-          enum: [graph-api, neo4j]
+          enum: [graph-engine]
         provider:
           type: object
           properties:
@@ -730,7 +729,7 @@ components:
       properties:
         source:
           type: string
-          description: Data source identifier (graph-engine or neo4j)
+          description: Data source identifier (always 'graph-engine')
         stale:
           type: boolean
           description: Whether the data is considered stale

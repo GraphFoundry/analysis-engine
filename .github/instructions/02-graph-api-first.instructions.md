@@ -162,8 +162,8 @@ Before merging Graph Engine client code, verify:
 
 | Situation | Copilot Action |
 |-----------|----------------|
-| Need graph data | Check for Graph API contract first |
+| Need graph data | Use Graph Engine API |
 | Contract exists | Implement Graph API client |
 | Contract missing | Stop, ask user for contract |
-| Graph API unavailable | Use Neo4j fallback, document reason |
-| User requests Neo4j | Confirm in plan, proceed with read-only |
+| Graph API unavailable | Return 503 with clear error message |
+| User asks to add fallback | Refuse, cite this rule |

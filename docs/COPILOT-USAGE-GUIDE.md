@@ -56,7 +56,6 @@ After implementation, click **Review My Changes** to switch to the Reviewer agen
 
 The Reviewer will:
 - Check plan compliance
-- Verify Neo4j read-only constraints
 - Check for security/logging issues
 - Provide a structured report
 
@@ -155,26 +154,19 @@ To prevent conflicts with your active work:
 Before accepting any changes:
 - Use Source Control view to review all modified files
 - Check for unintended scope creep
-- Verify Neo4j queries are read-only
+- Verify API contracts are correct
 
 ### Never Put Secrets in Prompts
 
 ❌ **Don't:**
 ```
-Connect to Neo4j using password "mySecretPassword123"
+Connect to database using password "mySecretPassword123"
 ```
 
 ✅ **Do:**
 ```
-Use the NEO4J_PASSWORD environment variable for authentication
+Use environment variables for authentication
 ```
-
-### Verify Read-Only Neo4j Access
-
-After any change touching `src/neo4j.js` or graph queries, verify:
-- All sessions use `defaultAccessMode: neo4j.session.READ`
-- No write queries (CREATE, MERGE, DELETE, SET)
-- `redactCredentials()` is preserved
 
 ---
 
@@ -189,20 +181,13 @@ After any change touching `src/neo4j.js` or graph queries, verify:
 5. Click **Review My Changes**
 6. Manually test: `npm start` + call endpoint
 
-### Consuming Graph API
+### Consuming Graph Engine API
 
 1. Select **Planner** from agent dropdown — Describe data needed
-2. Provide Graph API contract if known
-3. Plan should prefer Graph API over Neo4j
+2. Provide Graph Engine API contract if known
+3. Plan should use Graph Engine API exclusively
 4. `OK IMPLEMENT NOW`
-5. Verify `GRAPH_API_BASE_URL` usage in implementation
-
-### Neo4j Fallback Query
-
-1. Select **Planner** from agent dropdown — Explain why Graph API is insufficient
-2. Plan must document fallback justification
-3. `OK IMPLEMENT NOW`
-4. Reviewer checks read-only constraint
+5. Verify `SERVICE_GRAPH_ENGINE_URL` usage in implementation
 
 ---
 
@@ -214,12 +199,7 @@ Reusable prompts are in `.github/prompts/`:
 |--------|---------|
 | `01-plan-change.prompt.md` | Template for planning changes |
 | `02-implement-approved-plan.prompt.md` | Template for triggering implementation |
-| `03-graph-api-consumer.prompt.md` | Consuming leader's Graph API |
-| `04-neo4j-fallback.prompt.md` | Adding read-only Neo4j queries |
-| `05-add-or-change-endpoint.prompt.md` | Endpoint modifications |
-| `06-docs-update.prompt.md` | Documentation changes |
-| `07-pr-summary.prompt.md` | Generate PR description |
-
+| `03-graph-api-consumer.prompt.md` | Consuming Graph Engine API |
 ---
 
 ## 6. Troubleshooting
@@ -267,8 +247,7 @@ Agent Skills are specialized knowledge modules that Copilot automatically loads 
 
 | Skill | Purpose | When Loaded |
 |-------|---------|-------------|
-| **neo4j-readonly** | Guide for writing safe, read-only Neo4j Cypher queries | When asked to query Neo4j or write Cypher |
-| **graph-api-client** | Guide for consuming the leader-owned Graph API service | When asked to fetch graph data or integrate with Graph API |
+| **graph-api-client** | Guide for consuming the Graph Engine API service | When asked to fetch graph data or integrate with Graph Engine |
 | **simulation-runner** | Guide for running and extending simulation logic | When asked about failure/scaling simulations |
 | **k8s-deployment** | Guide for Kubernetes deployment patterns | When asked about K8s manifests or deployment |
 
@@ -284,13 +263,8 @@ Path-specific instructions in `.github/instructions/` are automatically applied 
 |------|------------|---------|
 | `00-operating-rules.instructions.md` | `**/*` | Absolute rules: implementation lock, evidence requirements |
 | `01-ownership-boundaries.instructions.md` | `**/*` | What this repo owns vs external teams |
-| `02-graph-api-first.instructions.md` | `**/graph.js`, `**/api/**/*.js` | Graph API must be preferred over Neo4j |
-| `03-neo4j-readonly-fallback.instructions.md` | `**/neo4j.js`, `**/*.cypher` | All Neo4j queries must be read-only |
-| `04-errors-logging-secrets.instructions.md` | `**/*.js` | Never log credentials, use redactCredentials() |
-| `05-k8s-minikube-scope.instructions.md` | `k8s/**/*`, `**/Dockerfile` | Kubernetes deployment context |
-
----
-
+| `02-graph-api-first.instructions.md` | `**/graphEngineClient.js`, `**/providers/**/*.js` | Graph Engine API is single source of truth |
+| `04-errors-logging-secrets.instructions.md` | `**/*.js` | Never log credentials |
 ## 9. Required VS Code Settings
 
 Ensure these settings are enabled in `.vscode/settings.json`:

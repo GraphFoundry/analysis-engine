@@ -2,7 +2,7 @@
  * Graph Engine HTTP Provider
  * 
  * Fetches graph data from the service-graph-engine HTTP API.
- * Implements the same interface as Neo4jGraphProvider.
+ * Implements the GraphDataProvider interface.
  * 
  * Uses /neighborhood endpoint (single call) instead of N+1 /peers calls.
  */
@@ -19,7 +19,7 @@ const { checkGraphHealth, getNeighborhood } = require('../graphEngineClient');
 
 /**
  * Normalize service ID to plain name for Graph Engine API
- * Input may be "namespace:name" (from Neo4j mode) or plain "name" (direct)
+ * Input may be "namespace:name" or plain "name"
  * Graph Engine uses plain names like "frontend", "checkoutservice"
  * 
  * TODO: Graph Engine assumes unique service names across namespaces.

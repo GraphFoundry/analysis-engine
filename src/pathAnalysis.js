@@ -2,7 +2,7 @@
  * Path Analysis Functions
  * 
  * Pure computational functions for analyzing paths in a graph snapshot.
- * These functions have NO Neo4j dependency - they work on in-memory data structures.
+ * These functions work on in-memory data structures provided by GraphDataProvider.
  */
 
 const config = require('./config');

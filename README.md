@@ -843,7 +843,7 @@ npm test
 
 ### Error: "Service not found"
 
-**Cause:** Target service does not exist in Neo4j graph
+**Cause:** Target service does not exist in Graph Engine
 
 **Solution:** Verify service exists:
 

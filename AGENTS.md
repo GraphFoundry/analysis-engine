@@ -148,8 +148,8 @@ GRAPH_API_TIMEOUT_MS=5000
 
 - **Naming:** camelCase for variables/functions, PascalCase for classes
 - **Async:** Use async/await, not callbacks
-- **Error handling:** Always wrap Neo4j/API calls in try-catch, redact credentials
-- **Logging:** Never log secrets; use `redactCredentials()` pattern
+- **Error handling:** Always wrap Graph Engine API calls in try-catch
+- **Logging:** Never log secrets
 
 ---
 
@@ -168,14 +168,12 @@ For detailed Copilot-specific rules, see:
 ### Path-Specific Instructions (auto-applied)
 - `.github/instructions/00-operating-rules.instructions.md` — Implementation lock, evidence requirements
 - `.github/instructions/01-ownership-boundaries.instructions.md` — What this repo owns
-- `.github/instructions/02-graph-api-first.instructions.md` — Graph API over Neo4j
-- `.github/instructions/03-neo4j-readonly-fallback.instructions.md` — Read-only Neo4j
+- `.github/instructions/02-graph-api-first.instructions.md` — Graph Engine API is single source of truth
 - `.github/instructions/04-errors-logging-secrets.instructions.md` — Security rules
 - `.github/instructions/05-k8s-minikube-scope.instructions.md` — K8s context
 
 ### Agent Skills (auto-loaded based on context)
-- `.github/skills/neo4j-readonly/` — Safe Cypher query patterns
-- `.github/skills/graph-api-client/` — Graph API consumption patterns
+- `.github/skills/graph-api-client/` — Graph Engine API consumption patterns
 - `.github/skills/simulation-runner/` — Simulation logic patterns
 - `.github/skills/k8s-deployment/` — Kubernetes deployment patterns
 

@@ -18,13 +18,11 @@ Use this skill when you need to:
 
 ## Critical Constraints
 
-### Graph API First Policy
-Always prefer Graph API over direct Neo4j access:
-1. **Try Graph API first** — It's the canonical data source
-2. **Fall back to Neo4j only if:**
-   - Graph API is unavailable
-   - Graph API is missing required capability
-   - User explicitly requests Neo4j
+### Graph Engine API Only Policy
+Graph Engine HTTP API is the single source of truth:
+1. **Use Graph Engine API** for all graph data
+2. **No fallback** — If unavailable, return 503
+3. **No alternatives** — No direct database access permitted
 
 ### Contract Discipline
 - **Never invent endpoints** — Only use documented endpoints
@@ -67,28 +65,27 @@ async function fetchFromGraphApi(endpoint, params = {}) {
   } catch (error) {
     if (error.response) {
       // Server responded with error
-      console.error(`Graph API error: ${error.response.status}`);
+      logger.error('Graph Engine error', {
+        status: error.response.status,
+        endpoint
+      });
     } else if (error.request) {
-      // No response received - trigger fallback
-      console.warn('Graph API unavailable, falling back to Neo4j');
-      throw new Error('GRAPH_API_UNAVAILABLE');
+      // No response received - service unavailable
+      logger.error('Graph Engine unavailable');
+      throw new GraphEngineUnavailableError('Service unreachable');
     }
     throw error;
   }
 }
 ```
 
-### Fallback Pattern
+### Error Handling Pattern (No Fallback)
 ```javascript
 async function getServiceTopology(serviceName) {
   try {
-    // Try Graph API first
-    return await fetchFromGraphApi(`/api/v1/services/${serviceName}/topology`);
+    return await fetchFromGraphEngine(`/topology`, { serviceName });
   } catch (error) {
-    if (error.message === 'GRAPH_API_UNAVAILABLE') {
-      // Fall back to Neo4j (read-only)
-      return await neo4jFallback.getServiceTopology(serviceName);
-    }
+    // No fallback - propagate error to return 503
     throw error;
   }
 }
@@ -144,7 +141,7 @@ GRAPH_API_TIMEOUT=30000
 async function isGraphApiAvailable() {
   try {
     await axios.get(`${config.graphApi.baseUrl}/health`, {
-      timeout: 5000
+      timeout: 20000
     });
     return true;
   } catch {

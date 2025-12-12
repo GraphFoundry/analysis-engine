@@ -113,6 +113,6 @@ When implementing, Copilot should use:
 graphApi: {
     baseUrl: process.env.GRAPH_API_BASE_URL,
     enabled: !!process.env.GRAPH_API_BASE_URL,
-    timeoutMs: parseInt(process.env.GRAPH_API_TIMEOUT_MS) || 5000
+    timeoutMs: parseInt(process.env.GRAPH_API_TIMEOUT_MS) || 20000
 }
 ```

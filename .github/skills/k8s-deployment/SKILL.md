@@ -22,15 +22,10 @@ Use this skill when you need to:
 ┌─────────────────────────────────────────────────────────┐
 │                      Minikube                           │
 │  ┌─────────────────┐     ┌─────────────────┐           │
-│  │   simulation    │────▶│     Neo4j       │           │
-│  │    -engine      │     │   (read-only)   │           │
-│  │   (Deployment)  │     │                 │           │
-│  └────────┬────────┘     └─────────────────┘           │
-│           │                                             │
-│           │              ┌─────────────────┐           │
-│           └─────────────▶│    Graph API    │           │
-│                          │   (external)    │           │
-│                          └─────────────────┘           │
+│  │   analysis      │────▶│  Graph Engine   │           │
+│  │    -engine      │     │   HTTP API      │           │
+│  │   (Deployment)  │     │   (external)    │           │
+│  └─────────────────┘     └─────────────────┘           │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -111,21 +106,13 @@ spec:
         env:
         - name: PORT
           value: "3000"
-        - name: NEO4J_URI
+        - name: SERVICE_GRAPH_ENGINE_URL
           valueFrom:
-            secretKeyRef:
-              name: neo4j-credentials
-              key: uri
-        - name: NEO4J_USER
-          valueFrom:
-            secretKeyRef:
-              name: neo4j-credentials
-              key: username
-        - name: NEO4J_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: neo4j-credentials
-              key: password
+            configMapKeyRef:
+              name: graph-engine-config
+              key: base-url
+        - name: GRAPH_API_TIMEOUT_MS
+          value: "20000"
         resources:
           requests:
             memory: "128Mi"
@@ -166,19 +153,15 @@ spec:
 
 ## Secrets Management
 
-### Create Neo4j Secret
+### Create Graph Engine ConfigMap
 ```bash
-kubectl create secret generic neo4j-credentials \
-  --from-literal=uri=bolt://neo4j:7687 \
-  --from-literal=username=neo4j \
-  --from-literal=password=<password>
+kubectl create configmap graph-engine-config \
+  --from-literal=base-url=http://service-graph-engine:3000
 ```
 
-### Create Graph API Secret (if needed)
-```bash
-kubectl create secret generic graph-api-config \
-  --from-literal=base-url=http://graph-api:8080
-```
+## Configuration Management
+
+All external service configuration is stored in ConfigMaps (not Secrets, as URLs are not sensitive):
 
 ## Kustomize Pattern
 
@@ -207,13 +190,16 @@ kubectl describe pod -l app=analysis-engine
 kubectl get events --sort-by='.lastTimestamp'
 ```
 
-### Connection to Neo4j Failing
+### Connection to Graph Engine Failing
 ```bash
-# Verify Neo4j is reachable from pod
-kubectl exec -it <pod-name> -- nc -zv neo4j 7687
+# Verify Graph Engine is reachable from pod
+kubectl exec -it <pod-name> -- nc -zv service-graph-engine 3000
 
-# Check secret is mounted
-kubectl exec -it <pod-name> -- env | grep NEO4J
+# Check config is mounted
+kubectl exec -it <pod-name> -- env | grep GRAPH
+
+# Test HTTP connectivity
+kubectl exec -it <pod-name> -- wget -O- http://service-graph-engine:3000/health
 ```
 
 ### Image Not Found

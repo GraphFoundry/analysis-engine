@@ -36,7 +36,7 @@ npm install
 ```bash
 npm start
 ```
-Server starts on port defined by `PORT` env var (default: 3000).
+Server starts on port defined by `PORT` env var (default: 7000).
 
 ### Run Tests
 ```bash
@@ -52,7 +52,7 @@ SERVICE_GRAPH_ENGINE_URL=http://service-graph-engine:3000
 
 # Optional
 PORT=7000
-GRAPH_API_TIMEOUT_MS=5000
+GRAPH_API_TIMEOUT_MS=20000
 ```
 
 ---
@@ -121,17 +121,22 @@ GRAPH_API_TIMEOUT_MS=5000
 │   │   ├── 01-plan-change.prompt.md
 │   │   ├── 02-implement-approved-plan.prompt.md
 │   │   ├── 03-graph-api-consumer.prompt.md
+│   │   ├── 04-graph-engine-integration.prompt.md
 │   │   ├── 05-add-or-change-endpoint.prompt.md
 │   │   ├── 06-docs-update.prompt.md
-│   │   └── 07-pr-summary.prompt.md
+│   │   ├── 07-pr-summary.prompt.md
+│   │   └── 08-post-change-verification.prompt.md
 │   ├── instructions/
 │   │   ├── 00-operating-rules.instructions.md
 │   │   ├── 01-ownership-boundaries.instructions.md
 │   │   ├── 02-graph-api-first.instructions.md
+│   │   ├── 03-graph-engine-single-source.instructions.md
 │   │   ├── 04-errors-logging-secrets.instructions.md
-│   │   └── 05-k8s-minikube-scope.instructions.md
+│   │   ├── 05-k8s-minikube-scope.instructions.md
+│   │   └── 06-external-service-resilience.instructions.md
 │   └── skills/
 │       ├── graph-api-client/SKILL.md
+│       ├── graph-engine-integration/SKILL.md
 │       ├── k8s-deployment/SKILL.md
 │       └── simulation-runner/SKILL.md
 ├── k8s/

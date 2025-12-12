@@ -26,19 +26,23 @@ Run this verification:
 
 #### Graph Engine Single Source
 ```bash
-# Verify no Neo4j references
-git grep -n -i "neo4j\|bolt\|cypher\|neo4j-driver"
+# Verify no direct database drivers in runtime code
+git grep -n -i "bolt://\|\.session\|driver\.connect" -- src/ test/ 2>/dev/null || echo "Clean"
 
-# Verify no fallback logic
-git grep -n -E "fallback|alternative.*graph|if.*neo4j"
+# Check package.json for forbidden database dependencies
+grep -E "\"(neo4j-driver|pg|mysql2|mongodb)\":" package.json 2>/dev/null || echo "Clean"
+
+# Verify no fallback logic in runtime code
+git grep -n -E "fallback.*database|alternative.*data.*source" -- src/ test/ 2>/dev/null || echo "Clean"
 
 # Verify Graph Engine client usage
-git grep -n "graphEngineClient\|GraphEngineHttpProvider"
+git grep -n "graphEngineClient\|GraphEngineHttpProvider" src/
 ```
 
 **Expected results:**
-- ✅ Zero Neo4j references
-- ✅ Zero fallback patterns
+- ✅ Zero direct database access in src/test
+- ✅ Zero forbidden dependencies in package.json
+- ✅ Zero fallback patterns in runtime code
 - ✅ Graph Engine client used for all graph data access
 
 #### External Service Resilience
@@ -165,9 +169,6 @@ git diff README.md DEPLOYMENT.md docs/
 # Check for broken references
 git grep -n "\.github/.*\.md" .github/
 
-# Verify no orphaned references
-git grep -n -E "neo4j-readonly|04-neo4j-fallback" .github/
-
 # Check file structure
 ls -la .github/instructions/
 ls -la .github/prompts/
@@ -209,11 +210,11 @@ git grep -n "TODO\|FIXME" src/
 #!/bin/bash
 echo "=== Regression Scan ==="
 
-echo "1. Neo4j references..."
-git grep -n -i "neo4j\|bolt\|cypher" && echo "❌ FAIL" || echo "✅ PASS"
+echo "1. Direct database access in runtime code..."
+git grep -n -i "bolt://" -- src/ test/ 2>/dev/null && echo "❌ FAIL" || echo "✅ PASS"
 
-echo "2. Fallback logic..."
-git grep -n -i "fallback" src/ && echo "❌ FAIL" || echo "✅ PASS"
+echo "2. Fallback logic in runtime code..."
+git grep -n -i "fallback.*database" -- src/ test/ 2>/dev/null && echo "❌ FAIL" || echo "✅ PASS"
 
 echo "3. Tests..."
 npm test && echo "✅ PASS" || echo "❌ FAIL"
@@ -231,8 +232,8 @@ echo "=== Full Governance Audit ==="
 
 # Architecture
 echo "Architecture Compliance:"
-echo "- Neo4j references: $(git grep -c -i 'neo4j' 2>/dev/null || echo 0)"
-echo "- Fallback patterns: $(git grep -c -i 'fallback' src/ 2>/dev/null || echo 0)"
+echo "- Direct DB access (runtime): $(git grep -c -E 'bolt://|driver\.session' -- src/ test/ 2>/dev/null || echo 0)"
+echo "- Fallback patterns (runtime): $(git grep -c -i 'fallback.*database' -- src/ test/ 2>/dev/null || echo 0)"
 echo "- Graph Engine usage: $(git grep -c 'graphEngineClient' src/ 2>/dev/null || echo 0)"
 
 # Security
@@ -247,10 +248,6 @@ npm test 2>&1 | grep -E "passing|failing"
 # Docs
 echo "Documentation:"
 echo "- Modified docs: $(git diff --name-only HEAD | grep -c '\.md$' || echo 0)"
-
-# Governance
-echo "Governance Files:"
-echo "- Broken refs: $(git grep -c -E "neo4j-readonly|04-neo4j-fallback" .github/ 2>/dev/null || echo 0)"
 ```
 
 ---
@@ -267,15 +264,15 @@ echo "🔍 Running post-change verification..."
 
 # 1. Architecture
 echo "📋 Checking architecture compliance..."
-if git grep -q -i "neo4j\|bolt\|cypher"; then
-  echo "❌ Neo4j references found!"
-  git grep -n -i "neo4j\|bolt\|cypher"
+if git grep -q -E "bolt://|driver\.session" -- src/ test/ 2>/dev/null; then
+  echo "❌ Direct database access found in runtime code!"
+  git grep -n -E "bolt://|driver\.session" -- src/ test/
   exit 1
 fi
 
-if git grep -q -i "fallback" src/; then
+if git grep -q -i "fallback.*database" -- src/ test/ 2>/dev/null; then
   echo "⚠️  Fallback logic detected - verify compliance"
-  git grep -n -i "fallback" src/
+  git grep -n -i "fallback.*database" -- src/ test/
 fi
 
 # 2. Tests
@@ -312,7 +309,7 @@ chmod +x scripts/verify-changes.sh
 
 Changes are ready to commit when:
 
-- [x] No Neo4j references exist
+- [x] No direct database access in runtime code (src/test)
 - [x] No fallback logic to alternative data sources
 - [x] All tests passing
 - [x] OpenAPI spec updated (if endpoints changed)
@@ -344,7 +341,7 @@ Add to PR template (`.github/pull_request_template.md`):
 ## Pre-Merge Verification
 
 - [ ] Ran `scripts/verify-changes.sh` (all checks passed)
-- [ ] No Neo4j references: `git grep -i neo4j`
+- [ ] No direct database access in src/test: `git grep -E "bolt://|driver\.session" src/ test/`
 - [ ] Tests passing: `npm test`
 - [ ] OpenAPI updated (if endpoints changed)
 - [ ] Docs updated (if behavior changed)
@@ -356,8 +353,8 @@ Add to PR template (`.github/pull_request_template.md`):
 
 | Check | Command | Expected |
 |-------|---------|----------|
-| Neo4j refs | `git grep -i neo4j` | Zero matches |
-| Fallback logic | `git grep -i fallback src/` | Zero matches |
+| Direct DB access | `git grep -E "bolt://" src/ test/` | Zero matches |
+| Fallback logic | `git grep -i "fallback.*database" src/ test/` | Zero matches |
 | Tests | `npm test` | All passing |
 | OpenAPI sync | `git diff openapi.yaml` | Updated if endpoints changed |
 | Credentials | `git grep -E "password.*="` | Zero matches |

@@ -61,7 +61,7 @@ Added POST /simulate/cascade endpoint for cascading failure simulation.
 
 - Used existing graph traversal pattern from failureSimulation.js
 - Limited serviceIds array to max 10 to prevent timeout
-- Neo4j queries remain read-only
+- Graph Engine HTTP API single source
 
 ## Testing
 
@@ -76,7 +76,7 @@ Added POST /simulate/cascade endpoint for cascading failure simulation.
 
 ## Rules Enforced
 
-- [x] Read-only Neo4j access
+- [x] Graph Engine single source policy
 - [x] Timeout pattern preserved
 - [x] Credential redaction used
 - [x] No CI/CD changes
@@ -104,7 +104,7 @@ Include this checklist in the PR:
 ```markdown
 ## Checklist
 
-- [ ] Read-only Neo4j access preserved
+- [ ] Graph Engine single source policy enforced
 - [ ] No credentials in logs
 - [ ] Timeout patterns maintained
 - [ ] Error handling follows existing patterns

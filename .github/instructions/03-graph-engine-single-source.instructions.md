@@ -42,11 +42,11 @@ There is **NO FALLBACK**. If Graph Engine is unavailable:
 
 | Forbidden Pattern | Why It's Blocked |
 |-------------------|------------------|
-| `if (!graphEngine) { return neo4j.query(...) }` | Fallback to direct DB |
-| `import neo4j from 'neo4j-driver'` | Direct DB dependency |
-| Adding `NEO4J_URI` env var | Alternative data source |
+| `if (!graphEngine) { return directDB.query(...) }` | Fallback to direct DB |
+| `import graphDB from 'graph-db-driver'` | Direct DB dependency |
+| Adding `DIRECT_DB_URI` env var | Alternative data source |
 | `graphProvider.getFallback()` | Bypass architecture |
-| Feature flag `USE_NEO4J_FALLBACK` | Undermines single source |
+| Feature flag `USE_DB_FALLBACK` | Undermines single source |
 
 ---
 
@@ -130,7 +130,7 @@ Copilot must **NEVER**:
 
 When reviewing changes that touch graph data access:
 
-- [ ] No database driver imports (`neo4j-driver`, `pg`, `mysql2`)
+- [ ] No database driver imports (graph-db-driver, pg, mysql2, etc.)
 - [ ] No fallback conditional logic
 - [ ] No alternative data source env vars
 - [ ] Graph Engine client is the only provider
@@ -149,7 +149,7 @@ If Copilot detects a violation request:
 3. **ASK** — Request explicit user override
 
 **Example:**
-> "This request adds Neo4j fallback logic, which violates Graph Engine Single Source Policy (03-graph-engine-single-source.instructions.md). Graph Engine is the only permitted data source. If Graph Engine is unavailable, the service must return 503. Please confirm if you want to override this policy."
+> "This request adds direct database fallback logic, which violates Graph Engine Single Source Policy (03-graph-engine-single-source.instructions.md). Graph Engine is the only permitted data source. If Graph Engine is unavailable, the service must return 503. Please confirm if you want to override this policy."
 
 ---
 

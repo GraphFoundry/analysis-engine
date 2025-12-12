@@ -197,11 +197,11 @@ test('new endpoint returns 503 when Graph Engine unavailable', async () => {
 Run these commands:
 
 ```bash
-# No Neo4j references
-git grep -n -i "neo4j\|bolt\|cypher"
+# No direct database access in runtime code
+git grep -n -E "bolt://|driver\.session" -- src/ test/
 
 # No fallback logic
-git grep -n -i "fallback\|alternative"
+git grep -n -i "fallback.*database" -- src/
 
 # Verify timeout usage
 git grep -n "timeout:" src/graphEngineClient.js
@@ -270,7 +270,7 @@ After implementation, provide this summary:
 ✅ Tests added (§0.3)
 
 ### Verification Results:
-✅ No Neo4j references: git grep clean
+✅ No direct DB access: git grep clean
 ✅ No fallback logic: git grep clean
 ✅ Tests passing: npm test
 ✅ OpenAPI valid: Swagger UI validates

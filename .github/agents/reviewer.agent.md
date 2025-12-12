@@ -37,16 +37,15 @@ Copilot must check each item and report findings:
 
 ### 2. Ownership Boundaries
 
-- [ ] No changes to Neo4j schema (leader-owned)
+- [ ] No changes to Graph Engine schema (leader-owned)
 - [ ] No invented Graph API endpoints
 - [ ] No assumptions about external contracts
 
-### 3. Neo4j Safety
+### 3. Data Source Policy
 
-- [ ] All runtime queries use `defaultAccessMode: neo4j.session.READ`
-- [ ] No new write queries (CREATE, MERGE, DELETE, SET)
-- [ ] No new schema queries (CREATE CONSTRAINT, CREATE INDEX)
-- [ ] Timeout patterns preserved
+- [ ] All graph data comes from Graph Engine HTTP API only
+- [ ] No direct database access introduced
+- [ ] No fallback logic to alternative data sources
 
 ### 4. Security & Logging
 
@@ -78,10 +77,11 @@ Copilot must check each item and report findings:
 
 > See full OpenAPI Policy in `.github/copilot-instructions.md` §0.4
 
-### 8. Graph API First Policy
+### 8. Graph Engine Single Source Policy
 
-- [ ] Graph API is preferred over direct Neo4j access
-- [ ] Neo4j fallback is read-only and documented
+- [ ] Graph Engine HTTP API is the only data source
+- [ ] No direct database access introduced
+- [ ] No fallback logic present
 
 ---
 
@@ -104,7 +104,7 @@ This agent has access to **read-only tools only**:
 
 ### ✅ Passed
 - Plan compliance: Changes match approved plan
-- Neo4j safety: Read-only access preserved
+- Data source policy: Graph Engine HTTP API only
 
 ### ⚠️ Warnings
 - [file:line] Consider adding timeout to new query

@@ -76,7 +76,7 @@ Copilot should respond with:
 - Or: N/A (docs-only change)
 
 ### Key Rules Enforced
-- Read-only Neo4j access preserved
+- Graph Engine single source policy
 - Credential redaction used
 - Timeout pattern maintained
 - Testing Policy followed
@@ -88,7 +88,7 @@ Copilot should respond with:
 ### Manual Verification Steps
 1. Run `npm start`
 2. Test endpoint: `curl -X POST localhost:7000/simulate/latency ...`
-3. Verify no Neo4j write operations
+3. Verify Graph Engine integration working
 ```
 
 > **Testing:** Per Testing Policy in `.github/copilot-instructions.md`

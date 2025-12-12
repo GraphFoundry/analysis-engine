@@ -79,7 +79,7 @@ Do NOT implement until I provide the contract and say "OK IMPLEMENT NOW".
 
 ## C) Clarifying Questions
 - Authentication: Does the API require auth headers?
-- Timeout: Should I use the same timeout as Neo4j (8000ms)?
+- Timeout: Should I use 20000ms (current Graph Engine timeout)?
 
 ## D) Waiting State
 Reply with `OK IMPLEMENT NOW` when ready.

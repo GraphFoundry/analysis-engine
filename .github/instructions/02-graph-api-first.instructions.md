@@ -17,7 +17,7 @@ Graph Engine API → ONLY data source
 No alternatives → Return 503 if unavailable
 ```
 
-**This policy replaces the previous Neo4j fallback approach.**
+**This is the single-source policy for graph data access.**
 
 ---
 
@@ -162,7 +162,7 @@ const provider = new GraphEngineHttpProvider();
 
 Before merging Graph Engine client code, verify:
 
-- [ ] No database driver imports in same file (`neo4j-driver`, `pg`, etc.)
+- [ ] No database driver imports in same file (e.g., direct graph/SQL drivers)
 - [ ] No fallback logic present
 - [ ] Error handling returns 503 when Graph Engine unavailable
 - [ ] Environment variable `SERVICE_GRAPH_ENGINE_URL` is required

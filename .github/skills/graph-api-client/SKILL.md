@@ -152,7 +152,7 @@ async function isGraphApiAvailable() {
 
 ## When NOT to Use This Skill
 
-- When user explicitly requests Neo4j access
+- When user explicitly requests direct database access (require override approval)
 - For write operations (Graph API is read-only from this service's perspective)
 - When contract for needed endpoint doesn't exist (ask first!)
 

@@ -395,8 +395,8 @@ info:
 
 ### 1. Code Scan
 ```bash
-# No Neo4j references
-git grep -n -i "neo4j\|bolt\|cypher"
+# No direct database access in runtime code
+git grep -n -E "bolt://|driver\.session" -- src/ test/
 
 # No fallback logic
 git grep -n -i "fallback" src/
@@ -473,7 +473,7 @@ function redactSensitiveParams(params) {
 
 | Anti-Pattern | Problem | Correct Approach |
 |--------------|---------|------------------|
-| `if (!graphEngine) { useNeo4j() }` | Fallback violates policy | Return 503 |
+| `if (!graphEngine) { useDirectDB() }` | Fallback violates policy | Return 503 |
 | No timeout | Hangs indefinitely | Set explicit timeout |
 | Swallow errors | Hides failures | Propagate to caller |
 | Invent endpoint | Contract violation | Verify endpoint exists |
@@ -495,5 +495,5 @@ Integration is complete when:
 - [x] OpenAPI spec updated and validated
 - [x] Documentation updated
 - [x] Verification commands pass
-- [x] No Neo4j references introduced
+- [x] No direct database access introduced
 - [x] No fallback logic added

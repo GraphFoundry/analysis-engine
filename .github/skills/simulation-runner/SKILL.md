@@ -74,7 +74,7 @@ Simulates the effect of scaling a service up or down.
 | `src/failureSimulation.js` | Failure scenario logic |
 | `src/scalingSimulation.js` | Scaling scenario logic |
 | `src/graph.js` | Fetches topology data |
-| `src/neo4j.js` | Neo4j fallback (read-only) |
+| ~~`src/neo4j.js`~~ | ~~Direct DB fallback~~ (removed) |
 
 ## Simulation Flow
 

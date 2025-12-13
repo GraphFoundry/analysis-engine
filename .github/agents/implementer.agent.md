@@ -65,24 +65,23 @@ If Copilot discovers something unexpected during implementation, it must:
 When touching files that contain safeguards, Copilot must preserve:
 
 - `redactCredentials()` usage
-- `defaultAccessMode: neo4j.session.READ`
 - Two-layer timeout pattern
 - K8s secretKeyRef patterns
 
-### 4. No Write Operations to Neo4j
+### 4. Graph Engine Single Source
 
 Copilot must never introduce:
 
-- `session.run()` with write queries (CREATE, MERGE, DELETE, SET)
-- Schema modifications (CREATE CONSTRAINT, CREATE INDEX)
-- Any `defaultAccessMode: neo4j.session.WRITE`
+- Direct database drivers or protocol-specific access patterns (forbidden)
+- Fallback logic to alternative data sources
+- Schema assumptions without Graph Engine API contract
 
 ### 5. Graph API First
 
 When implementing graph data access:
 
-1. **Prefer leader's Graph API** (use `GRAPH_API_BASE_URL` env var)
-2. Use Neo4j **read-only fallback** only if Graph API is unavailable or missing capability
+1. Use Graph Engine API (via `SERVICE_GRAPH_ENGINE_URL` env var)
+2. Return 503 if Graph Engine unavailable (no fallback)
 
 ### 6. OpenAPI Spec Updates
 
@@ -123,13 +122,13 @@ After implementation, Copilot must provide:
 - `path/to/existing.js` (lines X-Y)
 
 ### Key Rules Enforced
-- Read-only Neo4j access preserved
+- Graph Engine single source policy enforced
 - No credentials in logs
 - etc.
 
 ### Manual Verification Steps
 1. Run `npm start` and verify health endpoint
-2. Check that no new Neo4j write queries were introduced
+2. Verify Graph Engine integration working
 3. etc.
 ```
 
@@ -144,7 +143,7 @@ After implementation, Copilot must provide:
 | Follow approved plan | ✅ | |
 | Add/update tests (framework exists) | ✅ | |
 | Deviate from plan | | ❌ |
-| Add Neo4j writes | | ❌ |
+| Add direct DB access | | ❌ |
 | Add CI/CD workflows | | ❌ |
 | Add new test framework (without approval) | | ❌ |
 

@@ -16,8 +16,8 @@ Here is the contract:
 
 Please:
 1. Plan the implementation following Graph API First policy
-2. Include fallback to Neo4j read-only if needed
-3. Use GRAPH_API_BASE_URL env var
+2. Return 503 if Graph Engine unavailable (no fallback)
+3. Use SERVICE_GRAPH_ENGINE_URL env var
 4. Handle errors appropriately
 
 Do NOT implement until I say "OK IMPLEMENT NOW".
@@ -39,8 +39,8 @@ Here is the contract:
 
 Please:
 1. Plan the implementation following Graph API First policy
-2. Include fallback to Neo4j read-only if needed
-3. Use GRAPH_API_BASE_URL env var
+2. Return 503 if Graph Engine unavailable (no fallback)
+3. Use SERVICE_GRAPH_ENGINE_URL env var
 4. Handle errors appropriately
 
 Do NOT implement until I say "OK IMPLEMENT NOW".

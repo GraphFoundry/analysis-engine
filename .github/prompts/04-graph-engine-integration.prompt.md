@@ -197,8 +197,8 @@ test('new endpoint returns 503 when Graph Engine unavailable', async () => {
 Run these commands:
 
 ```bash
-# No direct database access in runtime code
-git grep -n -E "bolt://|driver\.session" -- src/ test/
+# No direct database drivers in runtime code
+git grep -n -E "(require|import).*driver" -- src/ test/ | grep -v graphEngine
 
 # No fallback logic
 git grep -n -i "fallback.*database" -- src/

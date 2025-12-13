@@ -23,10 +23,10 @@ All graph data MUST come from Graph Engine HTTP API:
 ### Rule 2: No Alternatives
 
 Copilot must **NEVER**:
-- Add direct database access (Neo4j, PostgreSQL, etc.)
+- Add direct database drivers or protocol-specific connections (forbidden)
 - Create "fallback" logic to other data sources
 - Implement feature flags to bypass Graph Engine
-- Add conditional logic like `if (graphEngineUnavailable) { useNeo4j() }`
+- Add conditional logic like `if (graphEngineUnavailable) { useFallback() }`
 
 ### Rule 3: No Fallback Pattern
 

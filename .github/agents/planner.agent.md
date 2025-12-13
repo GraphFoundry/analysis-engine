@@ -64,10 +64,10 @@ Reply with `OK IMPLEMENT NOW` when ready.
 
 Copilot must stop planning and ask for clarification if:
 
-- The request touches Neo4j schema (leader-owned)
+- The request touches Graph Engine schema (leader-owned)
 - The request requires Graph API contract that isn't documented
 - The request asks for CI/CD workflows (out of scope unless explicitly requested)
-- The request would introduce Neo4j write operations
+- The request would introduce direct database access
 - The request requires a new test framework (propose minimal scaffolding, get approval)
 
 > **Testing:** For behavioral changes, include a test plan. See Testing Policy in `.github/copilot-instructions.md`

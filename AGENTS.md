@@ -169,6 +169,7 @@ For detailed Copilot-specific rules, see:
 - `.github/agents/planner.agent.md` — Analyze, gather evidence, produce plans
 - `.github/agents/implementer.agent.md` — Execute approved plans (requires `OK IMPLEMENT NOW`)
 - `.github/agents/reviewer.agent.md` — Validate changes against rules
+- `.github/agents/evidence-answerer.agent.md` — Answer questions with codebase proof (file+line+1–5 line snippet). No implementation.
 
 ### Path-Specific Instructions (auto-applied)
 - `.github/instructions/00-operating-rules.instructions.md` — Implementation lock, evidence requirements

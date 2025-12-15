@@ -9,7 +9,7 @@ info:
     - Graph Engine API (service-graph-engine) - single source of truth for topology and metrics
     
     **Note:** Swagger UI is disabled by default. Set `ENABLE_SWAGGER=true` to enable.
-  version: 1.0.0
+  version: 1.1.0
   contact:
     name: Team Alpha Zero
   license:
@@ -90,7 +90,38 @@ paths:
         **Determinism Guarantee:** For the same input and graph snapshot, this endpoint
         returns identical results. The algorithm uses deterministic BFS traversal and
         fixed sorting criteria (no randomness).
+        
+        **Pipeline Trace:** Use `?trace=true` to include detailed execution trace in response.
       operationId: simulateFailure
+      parameters:
+        - name: trace
+          in: query
+          description: Enable pipeline trace (includes stage-by-stage execution details)
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: includeSnapshot
+          in: query
+          description: Include snapshot metadata in trace (requires trace=true)
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: includeRawPaths
+          in: query
+          description: Include raw path data structures in trace (requires trace=true)
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: includeEdgeDetails
+          in: query
+          description: Include detailed edge metadata in trace (requires trace=true)
+          required: false
+          schema:
+            type: boolean
+            default: false
       requestBody:
         required: true
         content:
@@ -217,7 +248,38 @@ paths:
         - **linear**: Optimistic model assuming perfect scaling.
           Formula: `newLatency = baseLatency * (currentPods / newPods)`
           Useful for best-case estimates; no overhead assumption.
+        
+        **Pipeline Trace:** Use `?trace=true` to include detailed execution trace in response.
       operationId: simulateScale
+      parameters:
+        - name: trace
+          in: query
+          description: Enable pipeline trace (includes stage-by-stage execution details)
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: includeSnapshot
+          in: query
+          description: Include snapshot metadata in trace (requires trace=true)
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: includeRawPaths
+          in: query
+          description: Include raw path data structures in trace (requires trace=true)
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: includeEdgeDetails
+          in: query
+          description: Include detailed edge metadata in trace (requires trace=true)
+          required: false
+          schema:
+            type: boolean
+            default: false
       requestBody:
         required: true
         content:
@@ -556,6 +618,13 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Recommendation'
+        pipelineTrace:
+          $ref: '#/components/schemas/PipelineTrace'
+          description: Optional pipeline trace (included only when trace=true query param is set)
+        correlationId:
+          type: string
+          format: uuid
+          description: Request correlation ID (included only when trace=true)
 
     ScalingSimulationRequest:
       allOf:
@@ -659,6 +728,13 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Recommendation'
+        pipelineTrace:
+          $ref: '#/components/schemas/PipelineTrace'
+          description: Optional pipeline trace (included only when trace=true query param is set)
+        correlationId:
+          type: string
+          format: uuid
+          description: Request correlation ID (included only when trace=true)
 
     RiskAnalysisResponse:
       type: object
@@ -877,3 +953,45 @@ components:
           enum: [high, medium, low]
         description:
           type: string
+
+    PipelineTrace:
+      type: object
+      description: Pipeline execution trace (included only when trace=true)
+      properties:
+        options:
+          type: object
+          description: Echo of trace options used
+          properties:
+            trace:
+              type: boolean
+            includeSnapshot:
+              type: boolean
+            includeRawPaths:
+              type: boolean
+            includeEdgeDetails:
+              type: boolean
+        stages:
+          type: array
+          description: Array of execution stages with timing information
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                description: Stage identifier (kebab-case)
+              ms:
+                type: number
+                description: Duration in milliseconds
+              summary:
+                type: object
+                description: Optional stage-specific metadata (size-limited)
+                additionalProperties: true
+              warnings:
+                type: array
+                description: Optional array of warning messages
+                items:
+                  type: string
+        generatedAt:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp when trace was finalized

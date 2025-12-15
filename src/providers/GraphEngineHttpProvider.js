@@ -71,11 +71,18 @@ class GraphEngineHttpProvider {
     /**
      * Check staleness and return freshness metadata
      * @private
+     * @param {Object} trace - Optional trace instance
      * @returns {Promise<{stale: boolean, lastUpdatedSecondsAgo: number|null, windowMinutes: number}>}
      * @throws {Error} If unavailable (503) or stale and required=true (503)
      */
-    async _checkStaleness() {
-        const healthResult = await checkGraphHealth();
+    async _checkStaleness(trace = null) {
+        const executeCheck = async () => {
+            return await checkGraphHealth();
+        };
+
+        const healthResult = trace && trace.stage
+            ? await trace.stage('staleness-check', executeCheck)
+            : await executeCheck();
         
         if (!healthResult.ok) {
             const err = new Error(`Graph API unavailable: ${healthResult.error}`);
@@ -84,6 +91,15 @@ class GraphEngineHttpProvider {
         }
 
         const { stale, lastUpdatedSecondsAgo, windowMinutes } = healthResult.data;
+
+        // Add staleness summary to trace
+        if (trace && trace.setSummary) {
+            trace.setSummary('staleness-check', {
+                stale,
+                lastUpdatedSecondsAgo,
+                windowMinutes
+            });
+        }
 
         if (stale) {
             const staleAge = lastUpdatedSecondsAgo === null ? 'age unknown' : `${lastUpdatedSecondsAgo}s old`;
@@ -110,9 +126,11 @@ class GraphEngineHttpProvider {
      * 
      * @param {string} targetServiceId - Target service ID (may be "namespace:name" or plain "name")
      * @param {number} maxDepth - Maximum traversal depth (1-3)
+     * @param {Object} options - Optional parameters (trace)
      * @returns {Promise<GraphSnapshot>}
      */
-    async fetchUpstreamNeighborhood(targetServiceId, maxDepth) {
+    async fetchUpstreamNeighborhood(targetServiceId, maxDepth, options = {}) {
+        const trace = options.trace || null;
         // Validate depth
         if (maxDepth < 1 || maxDepth > 3 || !Number.isInteger(maxDepth)) {
             throw new Error(`Invalid maxDepth: ${maxDepth}. Must be 1, 2, or 3`);
@@ -122,10 +140,16 @@ class GraphEngineHttpProvider {
         const serviceName = normalizeServiceName(targetServiceId);
 
         // Step 1: Check staleness + get freshness metadata
-        const freshness = await this._checkStaleness();
+        const freshness = await this._checkStaleness(trace);
 
         // Step 2: Get neighborhood (nodes + edges in single call)
-        const neighborhoodResult = await getNeighborhood(serviceName, maxDepth);
+        const fetchNeighborhood = async () => {
+            return await getNeighborhood(serviceName, maxDepth);
+        };
+
+        const neighborhoodResult = trace && trace.stage
+            ? await trace.stage('fetch-neighborhood', fetchNeighborhood)
+            : await fetchNeighborhood();
         
         if (!neighborhoodResult.ok) {
             if (neighborhoodResult.status === 404) {
@@ -141,6 +165,16 @@ class GraphEngineHttpProvider {
         }
 
         const nodeSet = new Set(nodeNames);
+        const rawEdgesCount = (neighborhoodResult.data.edges || []).length;
+
+        // Add fetch summary to trace
+        if (trace && trace.setSummary) {
+            trace.setSummary('fetch-neighborhood', {
+                depthUsed: maxDepth,
+                nodesReturned: nodeNames.length,
+                edgesReturned: rawEdgesCount
+            });
+        }
 
         // Build nodes Map
         /** @type {Map<string, NodeData>} */
@@ -215,6 +249,14 @@ class GraphEngineHttpProvider {
 
             incomingEdges.get(edge.target).push(edge);
             outgoingEdges.get(edge.source).push(edge);
+        }
+
+        // Add build-snapshot summary to trace
+        if (trace && trace.setSummary) {
+            trace.setSummary('build-snapshot', {
+                serviceCount: nodes.size,
+                edgeCount: edges.length
+            });
         }
 
         return {

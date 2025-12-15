@@ -1,6 +1,7 @@
 const { getProvider } = require('./providers');
 const { findTopPathsToTarget } = require('./pathAnalysis');
 const { generateFailureRecommendations } = require('./recommendations');
+const { createTrace } = require('./trace');
 const config = require('./config');
 
 /**
@@ -207,10 +208,12 @@ function estimateBoundaryLostTraffic(snapshot, reachableSet, blockedKey) {
  * 4. Find top N caller→target paths (sorted by pathRps)
  * 
  * @param {FailureSimulationRequest} request - Simulation request
+ * @param {Object} options - Optional parameters (traceOptions, correlationId)
  * @returns {Promise<FailureSimulationResult>}
  */
-async function simulateFailure(request) {
+async function simulateFailure(request, options = {}) {
     const maxDepth = request.maxDepth || config.simulation.maxTraversalDepth;
+    const trace = options.trace || createTrace(options.traceOptions || {});
     
     // Validate depth (must be integer 1-3)
     if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 3) {
@@ -219,7 +222,7 @@ async function simulateFailure(request) {
     
     // Fetch upstream neighborhood via Graph Engine
     const provider = getProvider();
-    const snapshot = await provider.fetchUpstreamNeighborhood(request.serviceId, maxDepth);
+    const snapshot = await provider.fetchUpstreamNeighborhood(request.serviceId, maxDepth, { trace });
     
     // Use normalized target key from snapshot (handles namespace:name vs plain name difference)
     const targetKey = snapshot.targetKey || request.serviceId;
@@ -263,12 +266,14 @@ async function simulateFailure(request) {
         .sort((a, b) => b.lostTrafficRps - a.lostTrafficRps);
     
     // Find top N paths to target (de-duplicated by path key)
-    const rawPaths = findTopPathsToTarget(
-        snapshot,
-        targetKey,
-        maxDepth,
-        config.simulation.maxPathsReturned * 2 // Fetch extra to allow for de-dupe
-    );
+    const rawPaths = await trace.stage('path-analysis', async () => {
+        return findTopPathsToTarget(
+            snapshot,
+            targetKey,
+            maxDepth,
+            config.simulation.maxPathsReturned * 2 // Fetch extra to allow for de-dupe
+        );
+    });
     
     // De-duplicate paths by join key
     const seenPaths = new Set();
@@ -280,6 +285,12 @@ async function simulateFailure(request) {
         criticalPathsToTarget.push(pathInfo);
         if (criticalPathsToTarget.length >= config.simulation.maxPathsReturned) break;
     }
+    
+    // Add path-analysis summary to trace
+    trace.setSummary('path-analysis', {
+        pathsFound: rawPaths.length,
+        pathsReturned: criticalPathsToTarget.length
+    });
     
     // ========================================================================
     // Phase 3: Downstream and Unreachable Impact Analysis
@@ -313,25 +324,39 @@ async function simulateFailure(request) {
     const affectedDownstream = Array.from(downstreamMap.values())
         .sort((a, b) => b.lostTrafficRps - a.lostTrafficRps);
 
-    // Compute reachability after "removing" the target
-    const entrypoints = pickEntrypoints(snapshot, targetKey);
-    const reachable = computeReachableNodes(snapshot, entrypoints, targetKey);
-    const lostByNode = estimateBoundaryLostTraffic(snapshot, reachable, targetKey);
+    // Compute reachability after "removing" the target (inside trace stage)
+    const { unreachableServices, totalLostTrafficRps } = await trace.stage('compute-impact', async () => {
+        const entrypoints = pickEntrypoints(snapshot, targetKey);
+        const reachable = computeReachableNodes(snapshot, entrypoints, targetKey);
+        const lostByNode = estimateBoundaryLostTraffic(snapshot, reachable, targetKey);
 
-    const unreachableServices = Array.from(snapshot.nodes.keys())
-        .filter(k => k !== targetKey && !reachable.has(k))
-        .map(k => {
-            const n = snapshot.nodes.get(k);
-            const out = nodeToOutRef(n, k);
-            const loss = lostByNode.get(k) || { lostFromTargetRps: 0, lostFromReachableCutsRps: 0, lostTotalRps: 0 };
-            return {
-                ...out,
-                lostTrafficRps: loss.lostTotalRps,
-                lostFromTargetRps: loss.lostFromTargetRps,
-                lostFromReachableCutsRps: loss.lostFromReachableCutsRps
-            };
-        })
-        .sort((a, b) => b.lostTrafficRps - a.lostTrafficRps);
+        const unreachableList = Array.from(snapshot.nodes.keys())
+            .filter(k => k !== targetKey && !reachable.has(k))
+            .map(k => {
+                const n = snapshot.nodes.get(k);
+                const out = nodeToOutRef(n, k);
+                const loss = lostByNode.get(k) || { lostFromTargetRps: 0, lostFromReachableCutsRps: 0, lostTotalRps: 0 };
+                return {
+                    ...out,
+                    lostTrafficRps: loss.lostTotalRps,
+                    lostFromTargetRps: loss.lostFromTargetRps,
+                    lostFromReachableCutsRps: loss.lostFromReachableCutsRps
+                };
+            })
+            .sort((a, b) => b.lostTrafficRps - a.lostTrafficRps);
+        
+        const totalLost = affectedCallers.reduce((sum, c) => sum + c.lostTrafficRps, 0);
+        
+        return { unreachableServices: unreachableList, totalLostTrafficRps: totalLost };
+    });
+    
+    // Add compute-impact summary to trace
+    trace.setSummary('compute-impact', {
+        affectedCallersCount: affectedCallers.length,
+        affectedDownstreamCount: affectedDownstream.length,
+        unreachableCount: unreachableServices.length,
+        totalLostTrafficRps
+    });
     
     // Determine data confidence based on staleness
     const dataFreshness = snapshot.dataFreshness ?? null;
@@ -359,11 +384,24 @@ async function simulateFailure(request) {
         affectedDownstream,
         unreachableServices,
         criticalPathsToTarget,
-        totalLostTrafficRps: affectedCallers.reduce((sum, c) => sum + c.lostTrafficRps, 0)
+        totalLostTrafficRps
     };
 
-    // Generate recommendations based on result
-    result.recommendations = generateFailureRecommendations(result);
+    // Generate recommendations based on result (inside trace stage)
+    result.recommendations = await trace.stage('recommendations', async () => {
+        return generateFailureRecommendations(result);
+    });
+    
+    // Add recommendations summary to trace
+    trace.setSummary('recommendations', {
+        recommendationCount: result.recommendations.length
+    });
+
+    // Attach pipeline trace if enabled
+    const pipelineTrace = trace.finalize();
+    if (pipelineTrace) {
+        result.pipelineTrace = pipelineTrace;
+    }
 
     return result;
 }

@@ -1,6 +1,7 @@
 const { getProvider } = require('./providers');
 const { findTopPathsToTarget } = require('./pathAnalysis');
 const { generateScalingRecommendations } = require('./recommendations');
+const { createTrace } = require('./trace');
 const config = require('./config');
 
 /**
@@ -169,13 +170,15 @@ function computeWeightedMeanLatency(edges, metric, adjustedLatencies = new Map()
  * 5. Return top N paths by traffic volume
  * 
  * @param {ScalingSimulationRequest} request - Simulation request
+ * @param {Object} options - Optional parameters (traceOptions, trace, correlationId)
  * @returns {Promise<ScalingSimulationResult>}
  */
-async function simulateScaling(request) {
+async function simulateScaling(request, options = {}) {
     const maxDepth = request.maxDepth || config.simulation.maxTraversalDepth;
     const latencyMetric = request.latencyMetric || config.simulation.defaultLatencyMetric;
     const modelType = request.model?.type || config.simulation.scalingModel;
     const alpha = request.model?.alpha ?? config.simulation.scalingAlpha;
+    const trace = options.trace || createTrace(options.traceOptions || {});
     
     // Validate inputs
     if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 3) {
@@ -196,7 +199,7 @@ async function simulateScaling(request) {
     
     // Fetch upstream neighborhood via Graph Engine
     const provider = getProvider();
-    const snapshot = await provider.fetchUpstreamNeighborhood(request.serviceId, maxDepth);
+    const snapshot = await provider.fetchUpstreamNeighborhood(request.serviceId, maxDepth, { trace });
     
     // Use normalized target key from snapshot (handles namespace:name vs plain name difference)
     const targetKey = snapshot.targetKey || request.serviceId;
@@ -208,48 +211,60 @@ async function simulateScaling(request) {
     }
     
     // Apply scaling formula to target (compute ONCE using rate-weighted mean of incoming latencies)
-    const adjustedLatencies = new Map();
-    const incomingEdges = snapshot.incomingEdges.get(targetKey) || [];
-    
-    // Compute rate-weighted mean baseline latency from incoming edges
-    let baseLatency = null;
-    if (incomingEdges.length > 0) {
-        let totalWeighted = 0;
-        let totalRate = 0;
-        for (const edge of incomingEdges) {
-            const rate = edge.rate ?? 0;
-            const lat = edge[latencyMetric];
-            if (rate > 0 && lat !== null && lat !== undefined) {
-                totalWeighted += rate * lat;
-                totalRate += rate;
+    const { adjustedLatencies, baseLatency, newLatency: projectedLatency } = await trace.stage('apply-scaling-model', async () => {
+        const latMap = new Map();
+        const edges = snapshot.incomingEdges.get(targetKey) || [];
+        
+        // Compute rate-weighted mean baseline latency from incoming edges
+        let baseLat = null;
+        if (edges.length > 0) {
+            let totalWeighted = 0;
+            let totalRate = 0;
+            for (const edge of edges) {
+                const rate = edge.rate ?? 0;
+                const lat = edge[latencyMetric];
+                if (rate > 0 && lat !== null && lat !== undefined) {
+                    totalWeighted += rate * lat;
+                    totalRate += rate;
+                }
+            }
+            if (totalRate > 0) {
+                baseLat = totalWeighted / totalRate;
             }
         }
-        if (totalRate > 0) {
-            baseLatency = totalWeighted / totalRate;
+        
+        // Apply scaling model if we have baseline
+        let newLat = null;
+        if (baseLat !== null) {
+            if (modelType === 'bounded_sqrt') {
+                newLat = applyBoundedSqrtScaling(
+                    baseLat,
+                    request.currentPods,
+                    request.newPods,
+                    alpha
+                );
+            } else if (modelType === 'linear') {
+                newLat = applyLinearScaling(
+                    baseLat,
+                    request.currentPods,
+                    request.newPods
+                );
+            } else {
+                throw new Error(`Unknown scaling model: ${modelType}`);
+            }
+            latMap.set(targetKey, newLat);
         }
-    }
+        
+        return { adjustedLatencies: latMap, baseLatency: baseLat, newLatency: newLat };
+    });
     
-    // Apply scaling model if we have baseline
-    if (baseLatency !== null) {
-        let newLatency;
-        if (modelType === 'bounded_sqrt') {
-            newLatency = applyBoundedSqrtScaling(
-                baseLatency,
-                request.currentPods,
-                request.newPods,
-                alpha
-            );
-        } else if (modelType === 'linear') {
-            newLatency = applyLinearScaling(
-                baseLatency,
-                request.currentPods,
-                request.newPods
-            );
-        } else {
-            throw new Error(`Unknown scaling model: ${modelType}`);
-        }
-        adjustedLatencies.set(targetKey, newLatency);
-    }
+    // Add apply-scaling-model summary to trace
+    trace.setSummary('apply-scaling-model', {
+        model: { type: modelType, alpha },
+        currentPods: request.currentPods,
+        newPods: request.newPods,
+        latencyFactor: baseLatency && projectedLatency ? (projectedLatency / baseLatency).toFixed(2) : null
+    });
     
     // Compute impact on ALL upstream nodes (not just direct callers)
     // This shows true propagation through the dependency graph
@@ -285,61 +300,71 @@ async function simulateScaling(request) {
         return Math.abs(b.deltaMs) - Math.abs(a.deltaMs);
     });
     
-    // Compute real multi-hop paths using findTopPathsToTarget
-    const topPaths = findTopPathsToTarget(
-        snapshot,
-        targetKey,
-        maxDepth,
-        config.simulation.maxPathsReturned
-    );
-    
-    // For each path, compute before/after latency (sum of edge latencies)
-    const affectedPaths = [];
-    for (const pathInfo of topPaths) {
-        const { path } = pathInfo;
-        let beforeMs = 0;
-        let afterMs = 0;
-        let hasIncompleteData = false;
+    // Compute real multi-hop paths using findTopPathsToTarget (inside trace stage)
+    const { affectedPaths } = await trace.stage('path-analysis', async () => {
+        const topPaths = findTopPathsToTarget(
+            snapshot,
+            targetKey,
+            maxDepth,
+            config.simulation.maxPathsReturned
+        );
         
-        // Sum latencies along path edges
-        for (let i = 0; i < path.length - 1; i++) {
-            const source = path[i];
-            const target = path[i + 1];
-            const edges = snapshot.outgoingEdges.get(source) || [];
-            const edge = edges.find(e => e.target === target);
+        // For each path, compute before/after latency (sum of edge latencies)
+        const paths = [];
+        for (const pathInfo of topPaths) {
+            const { path } = pathInfo;
+            let beforeMs = 0;
+            let afterMs = 0;
+            let hasIncompleteData = false;
             
-            if (!edge || edge[latencyMetric] === null || edge[latencyMetric] === undefined) {
-                hasIncompleteData = true;
-                break;
+            // Sum latencies along path edges
+            for (let i = 0; i < path.length - 1; i++) {
+                const source = path[i];
+                const target = path[i + 1];
+                const edges = snapshot.outgoingEdges.get(source) || [];
+                const edge = edges.find(e => e.target === target);
+                
+                if (!edge || edge[latencyMetric] === null || edge[latencyMetric] === undefined) {
+                    hasIncompleteData = true;
+                    break;
+                }
+                
+                const edgeLatency = edge[latencyMetric];
+                beforeMs += edgeLatency;
+                
+                // Use adjusted latency if this edge points to target
+                if (target === targetKey && adjustedLatencies.has(target)) {
+                    afterMs += adjustedLatencies.get(target);
+                } else {
+                    afterMs += edgeLatency;
+                }
             }
             
-            const edgeLatency = edge[latencyMetric];
-            beforeMs += edgeLatency;
-            
-            // Use adjusted latency if this edge points to target
-            if (target === targetKey && adjustedLatencies.has(target)) {
-                afterMs += adjustedLatencies.get(target);
-            } else {
-                afterMs += edgeLatency;
-            }
+            paths.push({
+                path,
+                pathRps: pathInfo.pathRps,
+                beforeMs: hasIncompleteData ? null : beforeMs,
+                afterMs: hasIncompleteData ? null : afterMs,
+                deltaMs: hasIncompleteData ? null : (afterMs - beforeMs),
+                incompleteData: hasIncompleteData
+            });
         }
-        
-        affectedPaths.push({
-            path,
-            pathRps: pathInfo.pathRps,
-            beforeMs: hasIncompleteData ? null : beforeMs,
-            afterMs: hasIncompleteData ? null : afterMs,
-            deltaMs: hasIncompleteData ? null : (afterMs - beforeMs),
-            incompleteData: hasIncompleteData
-        });
-    }
     
     // Sort by absolute delta descending (null deltas last)
-    affectedPaths.sort((a, b) => {
+    paths.sort((a, b) => {
         if (a.deltaMs === null) return 1;
         if (b.deltaMs === null) return -1;
         return Math.abs(b.deltaMs) - Math.abs(a.deltaMs);
     });
+    
+    return { affectedPaths: paths };
+});
+
+// Add path-analysis summary to trace
+trace.setSummary('path-analysis', {
+    pathsFound: affectedPaths.length,
+    pathsReturned: affectedPaths.length
+});
     
     // Build path lookup: for each caller, find their best (highest pathRps) path to target
     const callerBestPath = new Map();
@@ -365,6 +390,17 @@ async function simulateScaling(request) {
             caller.viaPath = null;
         }
     }
+    
+    // Add compute-impact summary to trace
+    trace.setSummary('compute-impact', {
+        affectedCallersCount: affectedCallers.length,
+        affectedPathsCount: affectedPaths.length,
+        latencyDeltaSummary: baseLatency && projectedLatency ? {
+            before: Math.round(baseLatency * 100) / 100,
+            after: Math.round(projectedLatency * 100) / 100,
+            delta: Math.round((projectedLatency - baseLatency) * 100) / 100
+        } : null
+    });
     
     // Determine data confidence based on staleness
     const dataFreshness = snapshot.dataFreshness ?? null;
@@ -438,8 +474,21 @@ async function simulateScaling(request) {
         ];
     }
 
-    // Generate recommendations based on result
-    result.recommendations = generateScalingRecommendations(result);
+    // Generate recommendations based on result (inside trace stage)
+    result.recommendations = await trace.stage('recommendations', async () => {
+        return generateScalingRecommendations(result);
+    });
+    
+    // Add recommendations summary to trace
+    trace.setSummary('recommendations', {
+        recommendationCount: result.recommendations.length
+    });
+
+    // Attach pipeline trace if enabled
+    const pipelineTrace = trace.finalize();
+    if (pipelineTrace) {
+        result.pipelineTrace = pipelineTrace;
+    }
 
     return result;
 }

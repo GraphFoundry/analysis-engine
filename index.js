@@ -9,6 +9,8 @@ const { getTopRiskServices } = require('./src/riskAnalysis');
 const { correlationMiddleware } = require('./src/middleware/correlation');
 const { rateLimitMiddleware } = require('./src/middleware/rateLimit');
 const { setupSwagger } = require('./src/swagger');
+const { parseTraceOptions } = require('./src/traceOptions');
+const { createTrace } = require('./src/trace');
 const {
     parseServiceIdentifier,
     normalizePodParams,
@@ -111,18 +113,35 @@ const simulationRateLimiter = rateLimitMiddleware();
  */
 app.post('/simulate/failure', simulationRateLimiter, async (req, res) => {
     try {
-        // Validate and parse request
-        const identifier = parseServiceIdentifier(req.body);
-        const maxDepth = validateDepth(
-            req.body.maxDepth,
-            config.simulation.maxTraversalDepth,
-            config.simulation.maxTraversalDepth
-        );
+        // Parse trace options from query string
+        const traceOptions = parseTraceOptions(req.query);
+        const trace = createTrace(traceOptions);
+        
+        // Validate and parse request (inside trace stage)
+        const { identifier, maxDepth: resolvedMaxDepth } = await trace.stage('scenario-parse', async () => {
+            const id = parseServiceIdentifier(req.body);
+            const depth = validateDepth(
+                req.body.maxDepth,
+                config.simulation.maxTraversalDepth,
+                config.simulation.maxTraversalDepth
+            );
+            return { identifier: id, maxDepth: depth };
+        });
+        
+        // Add scenario-parse summary to trace
+        trace.setSummary('scenario-parse', {
+            serviceIdResolved: identifier.serviceId,
+            maxDepth: resolvedMaxDepth
+        });
         
         // Execute simulation with timeout
         const simulationPromise = simulateFailure({
             serviceId: identifier.serviceId,
-            maxDepth
+            maxDepth: resolvedMaxDepth
+        }, {
+            traceOptions,
+            trace,
+            correlationId: req.correlationId
         });
         
         const timeoutPromise = new Promise((_, reject) => {
@@ -133,6 +152,11 @@ app.post('/simulate/failure', simulationRateLimiter, async (req, res) => {
         });
         
         const result = await Promise.race([simulationPromise, timeoutPromise]);
+        
+        // Add correlationId to body only when trace enabled
+        if (traceOptions.trace && req.correlationId) {
+            result.correlationId = req.correlationId;
+        }
         
         res.json(result);
     } catch (error) {
@@ -168,29 +192,54 @@ app.post('/simulate/failure', simulationRateLimiter, async (req, res) => {
  */
 app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
     try {
-        // Validate and parse request
-        const identifier = parseServiceIdentifier(req.body);
-        const newPods = normalizePodParams(req.body);
-        validateScalingParams(req.body.currentPods, newPods);
-        const latencyMetric = validateLatencyMetric(
-            req.body.latencyMetric,
-            config.simulation.defaultLatencyMetric
-        );
-        const maxDepth = validateDepth(
-            req.body.maxDepth,
-            config.simulation.maxTraversalDepth,
-            config.simulation.maxTraversalDepth
-        );
-        const model = validateScalingModel(req.body.model);
+        // Parse trace options from query string
+        const traceOptions = parseTraceOptions(req.query);
+        const trace = createTrace(traceOptions);
+        
+        // Validate and parse request (inside trace stage)
+        const { identifier, newPods, latencyMetric: resolvedLatencyMetric, maxDepth: resolvedMaxDepth, model: resolvedModel } = await trace.stage('scenario-parse', async () => {
+            const id = parseServiceIdentifier(req.body);
+            const pods = normalizePodParams(req.body);
+            validateScalingParams(req.body.currentPods, pods);
+            const metric = validateLatencyMetric(
+                req.body.latencyMetric,
+                config.simulation.defaultLatencyMetric
+            );
+            const depth = validateDepth(
+                req.body.maxDepth,
+                config.simulation.maxTraversalDepth,
+                config.simulation.maxTraversalDepth
+            );
+            const m = validateScalingModel(req.body.model);
+            return { 
+                identifier: id, 
+                newPods: pods, 
+                latencyMetric: metric, 
+                maxDepth: depth, 
+                model: m 
+            };
+        });
+        
+        // Add scenario-parse summary to trace
+        trace.setSummary('scenario-parse', {
+            serviceIdResolved: identifier.serviceId,
+            maxDepth: resolvedMaxDepth,
+            latencyMetric: resolvedLatencyMetric,
+            model: resolvedModel
+        });
         
         // Execute simulation with timeout
         const simulationPromise = simulateScaling({
             serviceId: identifier.serviceId,
             currentPods: req.body.currentPods,
             newPods,
-            latencyMetric,
-            model,
-            maxDepth
+            latencyMetric: resolvedLatencyMetric,
+            model: resolvedModel,
+            maxDepth: resolvedMaxDepth
+        }, {
+            traceOptions,
+            trace,
+            correlationId: req.correlationId
         });
         
         const timeoutPromise = new Promise((_, reject) => {
@@ -201,6 +250,11 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
         });
         
         const result = await Promise.race([simulationPromise, timeoutPromise]);
+        
+        // Add correlationId to body only when trace enabled
+        if (traceOptions.trace && req.correlationId) {
+            result.correlationId = req.correlationId;
+        }
         
         res.json(result);
     } catch (error) {

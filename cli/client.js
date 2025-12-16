@@ -18,7 +18,7 @@ const DEFAULT_TIMEOUT_MS = 30000;
  * @returns {string} Base URL
  */
 function getBaseUrl() {
-    return process.env.PREDICTIVE_ENGINE_URL || 'http://localhost:7000';
+    return process.env.PREDICTIVE_ENGINE_URL || 'http://localhost:5000';
 }
 
 /**

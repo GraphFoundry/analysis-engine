@@ -18,7 +18,7 @@ const path = require('node:path');
 const http = require('node:http');
 
 // Configuration
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:7000';
+const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:5000';
 const DEFAULT_SCENARIOS_FILE = path.join(__dirname, 'scenarios.sample.json');
 const DEFAULT_OUTPUT_DIR = path.join(__dirname, 'out');
 

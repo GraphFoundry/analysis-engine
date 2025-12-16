@@ -36,7 +36,7 @@ npm install
 ```bash
 npm start
 ```
-Server starts on port defined by `PORT` env var (default: 7000).
+Server starts on port defined by `PORT` env var (default: 5000).
 
 ### Run Tests
 ```bash
@@ -51,7 +51,7 @@ SERVICE_GRAPH_ENGINE_URL=http://service-graph-engine:3000
 # or: GRAPH_ENGINE_BASE_URL=http://service-graph-engine:3000
 
 # Optional
-PORT=7000
+PORT=5000
 GRAPH_API_TIMEOUT_MS=20000
 ```
 

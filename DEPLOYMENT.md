@@ -43,7 +43,7 @@ npm start
 **Expected output:**
 ```
 [2025-12-27T10:00:00.000Z] Predictive Analysis Engine started
-Port: 7000
+Port: 5000
 Max traversal depth: 2
 Default latency metric: p95
 Scaling model: bounded_sqrt (alpha: 0.5)
@@ -53,7 +53,7 @@ Timeout: 8000ms
 ### Verify Connection
 
 ```bash
-curl http://localhost:7000/health
+curl http://localhost:5000/health
 ```
 
 **Expected response:**
@@ -80,7 +80,7 @@ curl http://localhost:7000/health
 ### 1. Health Check
 
 ```bash
-curl http://localhost:7000/health
+curl http://localhost:5000/health
 ```
 
 ### 2. Simulate Service Failure
@@ -88,7 +88,7 @@ curl http://localhost:7000/health
 Simulates what happens if `checkoutservice` becomes unavailable.
 
 ```bash
-curl -X POST http://localhost:7000/simulate/failure \
+curl -X POST http://localhost:5000/simulate/failure \
   -H "Content-Type: application/json" \
   -d '{"serviceId": "default:checkoutservice"}'
 ```
@@ -128,7 +128,7 @@ curl -X POST http://localhost:7000/simulate/failure \
 Simulates scaling `frontend` from 2 to 6 pods and predicts latency impact.
 
 ```bash
-curl -X POST http://localhost:7000/simulate/scale \
+curl -X POST http://localhost:5000/simulate/scale \
   -H "Content-Type: application/json" \
   -d '{
     "serviceId": "default:frontend",
@@ -231,7 +231,7 @@ kubectl set env deployment/predictive-analysis-engine \
 kubectl apply -k k8s/base/
 
 # Port-forward for local access (use 7001 to avoid host conflicts)
-kubectl port-forward svc/predictive-analysis-engine 7001:7000
+kubectl port-forward svc/predictive-analysis-engine 7001:5000
 ```
 
 Then test via `http://localhost:7001/health`.

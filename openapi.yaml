@@ -17,7 +17,7 @@ info:
     name: ISC
 
 servers:
-  - url: http://localhost:7000
+  - url: http://localhost:5000
     description: Local development server
 
 externalDocs:

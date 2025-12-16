@@ -7,7 +7,7 @@
  * Makes HTTP requests to the API server.
  * 
  * Environment Variables:
- *   PREDICTIVE_ENGINE_URL - Base URL of the API (default: http://localhost:7000)
+ *   PREDICTIVE_ENGINE_URL - Base URL of the API (default: http://localhost:5000)
  * 
  * Exit Codes:
  *   0 - Success

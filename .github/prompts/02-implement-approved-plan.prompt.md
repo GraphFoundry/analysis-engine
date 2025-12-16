@@ -87,7 +87,7 @@ Copilot should respond with:
 
 ### Manual Verification Steps
 1. Run `npm start`
-2. Test endpoint: `curl -X POST localhost:7000/simulate/latency ...`
+2. Test endpoint: `curl -X POST localhost:5000/simulate/latency ...`
 3. Verify Graph Engine integration working
 ```
 

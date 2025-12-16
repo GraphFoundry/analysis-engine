@@ -26,12 +26,12 @@ RUN chown -R appuser:appgroup /app
 # Switch to non-root user
 USER appuser
 
-# Expose port (default 7000, configurable via PORT env)
-EXPOSE 7000
+# Expose port (default 5000, configurable via PORT env)
+EXPOSE 5000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -qO- http://localhost:${PORT:-7000}/health || exit 1
+    CMD wget -qO- http://localhost:${PORT:-5000}/health || exit 1
 
 # Start server
 CMD ["node", "index.js"]

@@ -84,7 +84,7 @@ All configuration is managed via environment variables with sensible defaults.
 | `MIN_LATENCY_FACTOR` | `0.6` | Minimum latency improvement factor |
 | `TIMEOUT_MS` | `8000` | Overall request timeout (ms) |
 | `MAX_PATHS_RETURNED` | `10` | Maximum paths in simulation results |
-| `PORT` | `7000` | HTTP server port |
+| `PORT` | `5000` | HTTP server port |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit sliding window (ms) |
 | `RATE_LIMIT_MAX_REQUESTS` | `60` | Max requests per window per client |
 
@@ -214,7 +214,7 @@ Or, using name/namespace:
 **Example:**
 
 ```bash
-curl -X POST http://localhost:7000/simulate/failure \
+curl -X POST http://localhost:5000/simulate/failure \
   -H "Content-Type: application/json" \
   -d '{"serviceId": "default:checkoutservice"}'
 ```
@@ -329,7 +329,7 @@ Simulates changing the pod count for a service and computes the impact on latenc
 **Example:**
 
 ```bash
-curl -X POST http://localhost:7000/simulate/scale \
+curl -X POST http://localhost:5000/simulate/scale \
   -H "Content-Type: application/json" \
   -d '{
     "serviceId": "default:frontend",
@@ -389,7 +389,7 @@ Returns the top services by centrality-based risk score. Services with higher ce
 **Example:**
 
 ```bash
-curl "http://localhost:7000/risk/services/top?metric=pagerank&limit=10"
+curl "http://localhost:5000/risk/services/top?metric=pagerank&limit=10"
 ```
 
 ---
@@ -462,7 +462,7 @@ All requests are assigned a unique correlation ID for distributed tracing:
 
 **Example:**
 ```bash
-curl -H "X-Correlation-Id: my-trace-123" http://localhost:7000/health
+curl -H "X-Correlation-Id: my-trace-123" http://localhost:5000/health
 # Response includes: X-Correlation-Id: my-trace-123
 ```
 
@@ -511,7 +511,7 @@ CLI tools for evaluating simulation accuracy against ground truth:
 node tools/eval/run.js \
   --scenarios tools/eval/scenarios.sample.json \
   --output predictions.json \
-  --base-url http://localhost:7000
+  --base-url http://localhost:5000
 ```
 
 **Scenario Format:**
@@ -629,7 +629,7 @@ newLatency = baseLatency * (currentPods / newPods)
 **Request:**
 
 ```bash
-curl -X POST http://localhost:7000/simulate/failure \
+curl -X POST http://localhost:5000/simulate/failure \
   -H "Content-Type: application/json" \
   -d '{
     "serviceId": "default:checkoutservice",
@@ -677,7 +677,7 @@ curl -X POST http://localhost:7000/simulate/failure \
 **Request:**
 
 ```bash
-curl -X POST http://localhost:7000/simulate/scale \
+curl -X POST http://localhost:5000/simulate/scale \
   -H "Content-Type: application/json" \
   -d '{
     "serviceId": "default:frontend",
@@ -755,7 +755,7 @@ npm start
 
 ```
 [2025-12-25T10:00:00.000Z] Predictive Analysis Engine started
-Port: 7000
+Port: 5000
 Max traversal depth: 2
 Default latency metric: p95
 Scaling model: bounded_sqrt (alpha: 0.5)
@@ -765,7 +765,7 @@ Timeout: 8000ms
 ### Verify Deployment
 
 ```bash
-curl http://localhost:7000/health
+curl http://localhost:5000/health
 ```
 
 **Expected Response:**
@@ -848,7 +848,7 @@ npm test
 **Solution:** Verify service exists:
 
 ```bash
-curl -X POST http://localhost:7000/simulate/failure \
+curl -X POST http://localhost:5000/simulate/failure \
   -H "Content-Type: application/json" \
   -d '{"serviceId": "default:frontend"}'
 ```

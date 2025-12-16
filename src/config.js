@@ -66,7 +66,7 @@ const config = {
     maxPathsReturned: parseInt(process.env.MAX_PATHS_RETURNED) || 10
   },
   server: {
-    port: parseInt(process.env.PORT) || 7000
+    port: parseInt(process.env.PORT) || 5000
   },
   graphApi: {
     baseUrl: process.env.GRAPH_ENGINE_BASE_URL || process.env.SERVICE_GRAPH_ENGINE_URL || 'http://service-graph-engine:3000',

@@ -68,7 +68,7 @@ Added POST /simulate/cascade endpoint for cascading failure simulation.
 1. Start server: `npm start`
 2. Test endpoint:
    ```bash
-   curl -X POST http://localhost:7000/simulate/cascade \
+   curl -X POST http://localhost:5000/simulate/cascade \
      -H "Content-Type: application/json" \
      -d '{"serviceIds": ["default:frontend"], "maxDepth": 2}'
    ```

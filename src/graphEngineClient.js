@@ -165,11 +165,22 @@ async function getCentralityTop(metric = 'pagerank', limit = 5) {
     return httpGet(url, config.graphApi.timeoutMs);
 }
 
+/**
+ * List all services from the graph
+ * @returns {Promise<ClientSuccess|ClientError>}
+ */
+async function getServices() {
+    const baseUrl = normalizeBaseUrl(config.graphApi.baseUrl);
+    const url = `${baseUrl}/services`;
+    return httpGet(url, config.graphApi.timeoutMs);
+}
+
 module.exports = {
     checkGraphHealth,
     getNeighborhood,
     getPeers,
     getCentralityTop,
+    getServices,
     getBaseUrl,
     isEnabled,
     // Exported for testing

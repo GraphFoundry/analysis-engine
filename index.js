@@ -2,7 +2,7 @@ const express = require('express');
 const config = require('./src/config');
 const { validateEnv } = require('./src/config');
 const { getProvider } = require('./src/providers');
-const { checkGraphHealth } = require('./src/graphEngineClient');
+const { checkGraphHealth, getServices } = require('./src/graphEngineClient');
 const { simulateFailure } = require('./src/failureSimulation');
 const { simulateScaling } = require('./src/scalingSimulation');
 const { getTopRiskServices } = require('./src/riskAnalysis');
@@ -94,6 +94,70 @@ app.get('/health', async (req, res) => {
             provider: 'graph-engine',
             error: error.message,
             uptimeSeconds: Math.round((Date.now() - startTime) / 100) / 10
+        });
+    }
+});
+
+/**
+ * GET /services
+ * List all discovered services from the graph
+ * Returns normalized serviceId (namespace:name) for UI consumption
+ */
+app.get('/services', async (req, res) => {
+    try {
+        // Fetch services and health in parallel
+        const [servicesResult, healthResult] = await Promise.all([
+            getServices(),
+            checkGraphHealth()
+        ]);
+
+        // Extract freshness info from health result
+        let stale = true;
+        let lastUpdatedSecondsAgo = null;
+        let windowMinutes = 5;
+
+        if (healthResult.ok && healthResult.data) {
+            stale = healthResult.data.stale ?? true;
+            lastUpdatedSecondsAgo = healthResult.data.lastUpdatedSecondsAgo ?? null;
+            windowMinutes = healthResult.data.windowMinutes ?? 5;
+        }
+
+        // Handle services fetch failure
+        if (!servicesResult.ok) {
+            return res.status(503).json({
+                error: servicesResult.error || 'Failed to fetch services from Graph Engine',
+                services: [],
+                count: 0,
+                stale: true,
+                lastUpdatedSecondsAgo: null,
+                windowMinutes
+            });
+        }
+
+        // Normalize services to include serviceId
+        const rawServices = servicesResult.data?.services || [];
+        const services = rawServices.map(svc => ({
+            serviceId: `${svc.namespace || 'default'}:${svc.name}`,
+            name: svc.name,
+            namespace: svc.namespace || 'default'
+        }));
+
+        res.json({
+            services,
+            count: services.length,
+            stale,
+            lastUpdatedSecondsAgo,
+            windowMinutes
+        });
+    } catch (error) {
+        // Graph Engine unreachable - return 503 with empty services
+        res.status(503).json({
+            error: error.message || 'Graph Engine unreachable',
+            services: [],
+            count: 0,
+            stale: true,
+            lastUpdatedSecondsAgo: null,
+            windowMinutes: 5
         });
     }
 });

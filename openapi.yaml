@@ -31,6 +31,8 @@ tags:
     description: Failure and scaling simulation endpoints
   - name: Risk
     description: Risk analysis and centrality-based scoring
+  - name: Services
+    description: Service discovery endpoints
 
 paths:
   /health:
@@ -77,6 +79,49 @@ paths:
               example:
                 status: error
                 error: Connection failed
+
+  /services:
+    get:
+      tags:
+        - Services
+      summary: List discovered services
+      description: |
+        Returns all services discovered in the current graph snapshot.
+        Each service includes a normalized serviceId (namespace:name) for UI consumption.
+        Includes freshness metadata from the graph engine.
+      operationId: listServices
+      responses:
+        '200':
+          description: List of services with freshness info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServicesListResponse'
+              example:
+                services:
+                  - serviceId: "default:frontend"
+                    name: "frontend"
+                    namespace: "default"
+                  - serviceId: "default:checkoutservice"
+                    name: "checkoutservice"
+                    namespace: "default"
+                count: 2
+                stale: false
+                lastUpdatedSecondsAgo: 45
+                windowMinutes: 5
+        '503':
+          description: Graph Engine unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServicesListResponse'
+              example:
+                error: "Graph Engine unreachable"
+                services: []
+                count: 0
+                stale: true
+                lastUpdatedSecondsAgo: null
+                windowMinutes: 5
 
   /simulate/failure:
     post:
@@ -548,6 +593,58 @@ components:
               type: boolean
         uptimeSeconds:
           type: number
+
+    ServicesListResponse:
+      type: object
+      description: List of discovered services with freshness metadata
+      properties:
+        services:
+          type: array
+          description: List of services from the current graph snapshot
+          items:
+            $ref: '#/components/schemas/DiscoveredService'
+        count:
+          type: integer
+          description: Total number of services discovered
+          example: 12
+        stale:
+          type: boolean
+          description: Whether the graph data is stale (older than expected window)
+          example: false
+        lastUpdatedSecondsAgo:
+          type: number
+          description: Seconds since last graph update (null if unavailable)
+          nullable: true
+          example: 45
+        windowMinutes:
+          type: number
+          description: Expected freshness window in minutes
+          example: 5
+        error:
+          type: string
+          description: Error message if service discovery failed
+          nullable: true
+
+    DiscoveredService:
+      type: object
+      description: A service discovered in the graph
+      required:
+        - serviceId
+        - name
+        - namespace
+      properties:
+        serviceId:
+          type: string
+          description: "Canonical service ID in format 'namespace:name'"
+          example: "default:frontend"
+        name:
+          type: string
+          description: Service name
+          example: "frontend"
+        namespace:
+          type: string
+          description: Kubernetes namespace
+          example: "default"
 
     ServiceIdentifier:
       type: object

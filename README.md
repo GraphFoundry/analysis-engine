@@ -6,36 +6,115 @@ The Predictive Analysis Engine is a microservice observability tool that perform
 
 **Source of Truth:** This service uses the Graph Engine API as its single data source. All graph topology and metrics data is retrieved via HTTP from `service-graph-engine`.
 
+## Quick Start (Local Development)
+
+### Prerequisites
+
+- **Node.js** v18+ (for running this service)
+- **Neo4j Desktop** (running locally on macOS)
+- **Minikube** (for microservice testbed)
+- **kubectl** (Kubernetes CLI)
+- **service-graph-engine** (running on port 3000)
+
+### Setup Steps
+
+1. **Start Minikube cluster with testbed:**
+   ```bash
+   # From repository root
+   chmod +x setup-local.sh
+   ./setup-local.sh
+   ```
+
+2. **Port-forward Prometheus (REQUIRED - keep running):**
+   ```bash
+   kubectl port-forward svc/prometheus -n istio-system 9090:9090
+   ```
+
+3. **Configure and start service-graph-engine:**
+   ```bash
+   cd ../service-graph-engine
+   cp .env.example .env
+   # Edit .env:
+   #   NEO4J_URI=bolt://localhost:7687
+   #   NEO4J_PASSWORD=your-actual-password
+   #   NEO4J_DATABASE=neo4j
+   #   PROMETHEUS_URL=http://localhost:9090
+   npm install
+   npm start
+   ```
+
+4. **Configure this service:**
+   ```bash
+   cd predictive-analysis-engine
+   cp .env.example .env
+   # Edit .env:
+   #   SERVICE_GRAPH_ENGINE_URL=http://localhost:3000
+   npm install
+   ```
+
+5. **Start this service:**
+   ```bash
+   npm start
+   ```
+
+6. **Generate traffic (so data flows into the system):**
+   ```bash
+   # Port-forward frontend (new terminal)
+   kubectl port-forward svc/frontend 8080:80
+   
+   # Access frontend to generate traffic
+   open http://localhost:8080
+   # Or use curl:
+   for i in {1..10}; do curl -s http://localhost:8080 > /dev/null; sleep 2; done
+   ```
+
+7. **Wait 1-2 minutes** for data collection, then test:
+   ```bash
+   curl http://localhost:5000/health
+   open http://localhost:5000/swagger
+   ```
+
+### Required Running Terminals
+
+```
+Terminal 1: kubectl port-forward svc/prometheus -n istio-system 9090:9090  ← REQUIRED
+Terminal 2: service-graph-engine (npm start)                               ← REQUIRED
+Terminal 3: predictive-analysis-engine (npm start)                         ← REQUIRED
+Terminal 4: kubectl port-forward svc/frontend 8080:80                      ← For traffic generation
+```
+
 ## Architecture
 
 ### System Context
 
 ```
-┌─────────────────────┐
-│ Prometheus          │
-│ (Metrics Source)    │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│ service-graph-      │
-│ engine              │◀──── HTTP/JSON
-│ (Graph Engine API)  │
-└──────────┬──────────┘
-           │
-           │ HTTP API
-           ▼
-┌──────────────────────┐
-│ predictive-analysis- │
-│ engine               │
-│ (This Service)       │
-└──────────┬───────────┘
-           │
-           ▼
-┌──────────────────────┐
-│ REST API Consumers   │
-│ (Operators, UIs)     │
-└──────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    Minikube (3 nodes)                            │
+│                                                                   │
+│  ┌────────────────────────────────┐   ┌─────────────────────┐  │
+│  │  Microservice Testbed          │   │  Prometheus         │  │
+│  │  (11 services with Istio)      │──▶│  (Istio Metrics)    │  │
+│  └────────────────────────────────┘   └─────────────────────┘  │
+│                                             │ port-forward      │
+│                                             │ :9090             │
+└─────────────────────────────────────────────┼───────────────────┘
+                                              │
+                ┌─────────────────────────────┘
+                │
+┌───────────────┼────────────────── macOS ─────────────────────┐
+│               ▼                                                │
+│   ┌──────────────────────┐        ┌──────────────────────┐   │
+│   │  service-graph-      │        │  predictive-         │   │
+│   │  engine              │◄───────│  analysis-engine     │   │
+│   │  (Node.js :3000)     │        │  (Node.js :5000)     │   │
+│   └──────────────────────┘        └──────────────────────┘   │
+│            │                                                   │
+│            ▼                                                   │
+│   ┌──────────────────────┐                                    │
+│   │  Neo4j               │                                    │
+│   │  (localhost:7687)    │                                    │
+│   └──────────────────────┘                                    │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Design Principles

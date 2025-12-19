@@ -9,7 +9,7 @@ info:
     - Graph Engine API (service-graph-engine) - single source of truth for topology and metrics
     
     **Note:** Swagger UI is disabled by default. Set `ENABLE_SWAGGER=true` to enable.
-  version: 1.1.0
+  version: 1.2.0
   contact:
     name: Team Alpha Zero
   license:
@@ -33,6 +33,10 @@ tags:
     description: Risk analysis and centrality-based scoring
   - name: Services
     description: Service discovery endpoints
+  - name: Telemetry
+    description: Time-series metrics from InfluxDB
+  - name: Decisions
+    description: Decision logging and history
 
 paths:
   /health:
@@ -523,6 +527,220 @@ paths:
                 error: "Graph API is not enabled"
         '500':
           description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /telemetry/service:
+    get:
+      tags:
+        - Telemetry
+      summary: Get time-series metrics for a service
+      description: |
+        Retrieves time-series metrics for a specific service from InfluxDB 3.
+        Maximum time range is 7 days. Returns data points bucketed by step interval.
+      operationId: getTelemetryService
+      parameters:
+        - name: service
+          in: query
+          required: true
+          description: Service name to query metrics for
+          schema:
+            type: string
+          example: productcatalogservice
+        - name: from
+          in: query
+          required: true
+          description: Start timestamp (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+          example: '2026-01-04T10:00:00Z'
+        - name: to
+          in: query
+          required: true
+          description: End timestamp (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+          example: '2026-01-04T11:00:00Z'
+        - name: step
+          in: query
+          required: false
+          description: Time bucket size in seconds (default 60)
+          schema:
+            type: integer
+            default: 60
+      responses:
+        '200':
+          description: Time-series metrics data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelemetryServiceResponse'
+        '400':
+          description: Invalid parameters or time range exceeds limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: InfluxDB not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /telemetry/edges:
+    get:
+      tags:
+        - Telemetry
+      summary: Get time-series metrics for edges
+      description: |
+        Retrieves time-series metrics for edges (calls between services) from InfluxDB 3.
+        Maximum time range is 7 days. Can filter by source/destination service.
+      operationId: getTelemetryEdges
+      parameters:
+        - name: fromService
+          in: query
+          required: false
+          description: Source service name (optional filter)
+          schema:
+            type: string
+        - name: toService
+          in: query
+          required: false
+          description: Destination service name (optional filter)
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: true
+          description: Start timestamp (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          description: End timestamp (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+        - name: step
+          in: query
+          required: false
+          description: Time bucket size in seconds (default 60)
+          schema:
+            type: integer
+            default: 60
+      responses:
+        '200':
+          description: Time-series edge metrics data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelemetryEdgesResponse'
+        '400':
+          description: Invalid parameters or time range exceeds limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: InfluxDB not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /decisions/log:
+    post:
+      tags:
+        - Decisions
+      summary: Log a decision from Pipeline Playground
+      description: |
+        Stores a decision record in SQLite for audit trail and analysis.
+        Used by Pipeline Playground to log simulation decisions.
+      operationId: logDecision
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogDecisionRequest'
+            example:
+              timestamp: '2026-01-04T10:00:00Z'
+              type: failure
+              scenario:
+                serviceId: 'productcatalogservice'
+                maxDepth: 2
+              result:
+                totalLostTrafficRps: 150.5
+                affectedCallers: 5
+              correlationId: 'abc-123-def'
+      responses:
+        '201':
+          description: Decision logged successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogDecisionResponse'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: SQLite not configured or unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /decisions/history:
+    get:
+      tags:
+        - Decisions
+      summary: Get decision history logs
+      description: |
+        Retrieves decision logs from SQLite with pagination and optional type filter.
+        Returns most recent decisions first.
+      operationId: getDecisionHistory
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Page size (max 100, default 50)
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: offset
+          in: query
+          required: false
+          description: Pagination offset (default 0)
+          schema:
+            type: integer
+            default: 0
+        - name: type
+          in: query
+          required: false
+          description: Filter by decision type (failure, scaling, risk)
+          schema:
+            type: string
+            enum: [failure, scaling, risk]
+      responses:
+        '200':
+          description: Decision history with pagination metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionHistoryResponse'
+        '503':
+          description: SQLite not configured or unavailable
           content:
             application/json:
               schema:
@@ -1092,3 +1310,172 @@ components:
           type: string
           format: date-time
           description: ISO 8601 timestamp when trace was finalized
+
+    TelemetryServiceResponse:
+      type: object
+      description: Time-series metrics for a service
+      required:
+        - service
+        - from
+        - to
+        - step
+        - datapoints
+      properties:
+        service:
+          type: string
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        step:
+          type: integer
+        datapoints:
+          type: array
+          items:
+            type: object
+            properties:
+              timestamp:
+                type: string
+                format: date-time
+              service:
+                type: string
+              namespace:
+                type: string
+              requestRate:
+                type: number
+              errorRate:
+                type: number
+              p50:
+                type: number
+              p95:
+                type: number
+              p99:
+                type: number
+              availability:
+                type: number
+
+    TelemetryEdgesResponse:
+      type: object
+      description: Time-series metrics for edges
+      required:
+        - from
+        - to
+        - step
+        - datapoints
+      properties:
+        fromService:
+          type: string
+        toService:
+          type: string
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        step:
+          type: integer
+        datapoints:
+          type: array
+          items:
+            type: object
+            properties:
+              timestamp:
+                type: string
+                format: date-time
+              from:
+                type: string
+              to:
+                type: string
+              namespace:
+                type: string
+              requestRate:
+                type: number
+              errorRate:
+                type: number
+              p50:
+                type: number
+              p95:
+                type: number
+              p99:
+                type: number
+
+    LogDecisionRequest:
+      type: object
+      description: Request to log a decision
+      required:
+        - timestamp
+        - type
+        - scenario
+        - result
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        type:
+          type: string
+          enum: [failure, scaling, risk]
+        scenario:
+          type: object
+          additionalProperties: true
+        result:
+          type: object
+          additionalProperties: true
+        correlationId:
+          type: string
+
+    LogDecisionResponse:
+      type: object
+      description: Response after logging a decision
+      required:
+        - id
+        - timestamp
+      properties:
+        id:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+
+    DecisionHistoryResponse:
+      type: object
+      description: Decision history with pagination
+      required:
+        - decisions
+        - pagination
+      properties:
+        decisions:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              timestamp:
+                type: string
+                format: date-time
+              type:
+                type: string
+              scenario:
+                type: object
+                additionalProperties: true
+              result:
+                type: object
+                additionalProperties: true
+              correlationId:
+                type: string
+                nullable: true
+              createdAt:
+                type: string
+                format: date-time
+        pagination:
+          type: object
+          properties:
+            limit:
+              type: integer
+            offset:
+              type: integer
+            total:
+              type: integer

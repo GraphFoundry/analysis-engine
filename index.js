@@ -11,6 +11,7 @@ const { rateLimitMiddleware } = require('./src/middleware/rateLimit');
 const { setupSwagger } = require('./src/swagger');
 const { parseTraceOptions } = require('./src/traceOptions');
 const { createTrace } = require('./src/trace');
+const { getWorker } = require('./src/pollWorker');
 const {
     parseServiceIdentifier,
     normalizePodParams,
@@ -368,6 +369,14 @@ app.get('/risk/services/top', async (req, res) => {
     }
 });
 
+// Decision logging routes
+const decisionsRouter = require('./src/routes/decisions');
+app.use('/decisions', decisionsRouter);
+
+// Telemetry query routes
+const telemetryRouter = require('./src/routes/telemetry');
+app.use('/telemetry', telemetryRouter);
+
 // Start server
 const server = app.listen(config.server.port, () => {
     console.log(`[${new Date().toISOString()}] Predictive Analysis Engine started`);
@@ -376,11 +385,20 @@ const server = app.listen(config.server.port, () => {
     console.log(`Default latency metric: ${config.simulation.defaultLatencyMetric}`);
     console.log(`Scaling model: ${config.simulation.scalingModel} (alpha: ${config.simulation.scalingAlpha})`);
     console.log(`Timeout: ${config.simulation.timeoutMs}ms`);
+    
+    // Start background telemetry poll worker
+    const pollWorker = getWorker();
+    pollWorker.start();
 });
 
 // Graceful shutdown
 const shutdown = async () => {
     console.log('\nShutting down service...');
+    
+    // Stop poll worker
+    const pollWorker = getWorker();
+    await pollWorker.stop();
+    
     server.close();
     const provider = getProvider();
     await provider.close();

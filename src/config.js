@@ -75,6 +75,18 @@ const config = {
   rateLimit: {
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000,
     maxRequests: parseInt(process.env.RATE_LIMIT_MAX) || 60
+  },
+  influx: {
+    host: process.env.INFLUX_HOST || '',
+    token: process.env.INFLUX_TOKEN || '',
+    database: process.env.INFLUX_DATABASE || ''
+  },
+  sqlite: {
+    dbPath: process.env.SQLITE_DB_PATH || './data/decisions.db'
+  },
+  telemetryWorker: {
+    enabled: process.env.TELEMETRY_WORKER_ENABLED !== 'false',
+    pollIntervalMs: parseInt(process.env.TELEMETRY_POLL_INTERVAL_MS) || 60000
   }
 };
 

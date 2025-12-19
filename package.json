@@ -31,6 +31,8 @@
   },
   "homepage": "https://gitlab.com/team-alpha-zero/research-adaptive-micro-service-management/predictive-analysis-engine#readme",
   "dependencies": {
+    "@influxdata/influxdb3-client": "^0.7.0",
+    "better-sqlite3": "^11.8.1",
     "commander": "^11.1.0",
     "dotenv": "^17.2.3",
     "express": "^4.22.1"

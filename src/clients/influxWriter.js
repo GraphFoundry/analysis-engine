@@ -4,7 +4,7 @@
  */
 
 const { InfluxDBClient } = require('@influxdata/influxdb3-client');
-const config = require('./config');
+const config = require('../config/config');
 
 class InfluxWriter {
   constructor() {

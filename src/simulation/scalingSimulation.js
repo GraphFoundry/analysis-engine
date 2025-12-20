@@ -1,8 +1,8 @@
-const { getProvider } = require('./providers');
+const { getProvider } = require('../storage/providers');
 const { findTopPathsToTarget } = require('./pathAnalysis');
-const { generateScalingRecommendations } = require('./recommendations');
-const { createTrace } = require('./trace');
-const config = require('./config');
+const { generateScalingRecommendations } = require('../utils/recommendations');
+const { createTrace } = require('../utils/trace');
+const config = require('../config/config');
 
 /**
  * @typedef {import('./providers/GraphDataProvider').EdgeData} EdgeData

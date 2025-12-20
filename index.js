@@ -1,17 +1,17 @@
 const express = require('express');
-const config = require('./src/config');
-const { validateEnv } = require('./src/config');
-const { getProvider } = require('./src/providers');
-const { checkGraphHealth, getServices } = require('./src/graphEngineClient');
-const { simulateFailure } = require('./src/failureSimulation');
-const { simulateScaling } = require('./src/scalingSimulation');
-const { getTopRiskServices } = require('./src/riskAnalysis');
+const config = require('./src/config/config');
+const { validateEnv } = require('./src/config/config');
+const { getProvider } = require('./src/storage/providers');
+const { checkGraphHealth, getServices } = require('./src/clients/graphEngineClient');
+const { simulateFailure } = require('./src/simulation/failureSimulation');
+const { simulateScaling } = require('./src/simulation/scalingSimulation');
+const { getTopRiskServices } = require('./src/simulation/riskAnalysis');
 const { correlationMiddleware } = require('./src/middleware/correlation');
 const { rateLimitMiddleware } = require('./src/middleware/rateLimit');
-const { setupSwagger } = require('./src/swagger');
-const { parseTraceOptions } = require('./src/traceOptions');
-const { createTrace } = require('./src/trace');
-const { getWorker } = require('./src/pollWorker');
+const { setupSwagger } = require('./src/utils/swagger');
+const { parseTraceOptions } = require('./src/utils/traceOptions');
+const { createTrace } = require('./src/utils/trace');
+const { getWorker } = require('./src/telemetry/pollWorker');
 const {
     parseServiceIdentifier,
     normalizePodParams,
@@ -19,7 +19,7 @@ const {
     validateLatencyMetric,
     validateDepth,
     validateScalingModel
-} = require('./src/validator');
+} = require('./src/utils/validator');
 
 // Validate environment before starting server
 validateEnv();

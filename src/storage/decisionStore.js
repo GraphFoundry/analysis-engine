@@ -6,7 +6,7 @@
 const Database = require('better-sqlite3');
 const fs = require('node:fs');
 const path = require('node:path');
-const config = require('./config');
+const config = require('../config/config');
 
 class DecisionStore {
   constructor(dbPath = config.sqlite.dbPath) {

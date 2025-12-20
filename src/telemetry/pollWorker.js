@@ -3,9 +3,9 @@
  * Polls Graph Engine API and writes metrics to InfluxDB
  */
 
-const graphEngineClient = require('./graphEngineClient');
-const InfluxWriter = require('./influxWriter');
-const config = require('./config');
+const graphEngineClient = require('../clients/graphEngineClient');
+const InfluxWriter = require('../clients/influxWriter');
+const config = require('../config/config');
 
 class PollWorker {
   constructor() {

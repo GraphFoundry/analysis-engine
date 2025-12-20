@@ -6,8 +6,8 @@
 
 const express = require('express');
 const router = express.Router();
-const DecisionStore = require('../decisionStore');
-const config = require('../config');
+const DecisionStore = require('../storage/decisionStore');
+const config = require('../config/config');
 
 // Initialize decision store (singleton)
 let decisionStore;

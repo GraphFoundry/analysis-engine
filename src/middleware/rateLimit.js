@@ -7,8 +7,8 @@
  * Returns 429 Too Many Requests when limit exceeded.
  */
 
-const config = require('../config');
-const logger = require('../logger');
+const config = require('../config/config');
+const logger = require('../utils/logger');
 
 /**
  * In-memory store for request timestamps per client

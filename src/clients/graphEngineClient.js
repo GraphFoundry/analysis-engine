@@ -7,7 +7,7 @@
 
 const http = require('node:http');
 const https = require('node:https');
-const config = require('./config');
+const config = require('../config/config');
 
 /**
  * @typedef {Object} GraphHealthResponse

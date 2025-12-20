@@ -5,7 +5,7 @@
  * These functions work on in-memory data structures provided by GraphDataProvider.
  */
 
-const config = require('./config');
+const config = require('../config/config');
 
 /**
  * @typedef {import('./providers/GraphDataProvider').GraphSnapshot} GraphSnapshot

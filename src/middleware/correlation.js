@@ -9,7 +9,7 @@
  */
 
 const crypto = require('node:crypto');
-const logger = require('../logger');
+const logger = require('../utils/logger');
 
 /**
  * Generate a UUID v4

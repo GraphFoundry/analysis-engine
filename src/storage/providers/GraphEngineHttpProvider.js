@@ -7,8 +7,8 @@
  * Uses /neighborhood endpoint (single call) instead of N+1 /peers calls.
  */
 
-const config = require('../config');
-const { checkGraphHealth, getNeighborhood } = require('../graphEngineClient');
+const config = require('../../config/config');
+const { checkGraphHealth, getNeighborhood } = require('../../clients/graphEngineClient');
 
 /**
  * @typedef {import('./GraphDataProvider').GraphSnapshot} GraphSnapshot

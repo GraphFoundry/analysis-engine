@@ -7,7 +7,7 @@
 const express = require('express');
 const router = express.Router();
 const { InfluxDBClient } = require('@influxdata/influxdb3-client');
-const config = require('../config');
+const config = require('../config/config');
 
 // Initialize InfluxDB client (singleton)
 let influxClient;

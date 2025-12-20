@@ -5,7 +5,7 @@
  * Higher centrality = higher risk if the service fails.
  */
 
-const { getCentralityTop, checkGraphHealth } = require('./graphEngineClient');
+const { getCentralityTop, checkGraphHealth } = require('../clients/graphEngineClient');
 
 /**
  * Risk level thresholds based on centrality score percentile

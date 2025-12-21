@@ -55,6 +55,12 @@ function validateTimeRange(from, to) {
  * - step: Time bucket size in seconds (optional, default: 60)
  */
 router.get('/service', async (req, res) => {
+  if (!config.telemetry.enabled) {
+    return res.status(503).json({ 
+      error: 'Telemetry endpoints disabled. Set TELEMETRY_ENABLED=true to enable.' 
+    });
+  }
+
   if (!influxClient) {
     return res.status(503).json({ 
       error: 'InfluxDB not configured. Set INFLUX_HOST, INFLUX_TOKEN, INFLUX_DATABASE' 
@@ -81,10 +87,10 @@ router.get('/service', async (req, res) => {
 
     const stepSeconds = Number.parseInt(step) || 60;
 
-    // SQL query for InfluxDB 3
+    // SQL query for InfluxDB 3 (using DATE_BIN for time bucketing)
     const query = `
       SELECT 
-        time_bucket(INTERVAL '${stepSeconds} seconds', time) AS bucket,
+        DATE_BIN(INTERVAL '${stepSeconds} seconds', time, '1970-01-01T00:00:00Z'::TIMESTAMP) AS bucket,
         service,
         namespace,
         AVG(request_rate) AS avg_request_rate,
@@ -149,6 +155,12 @@ router.get('/service', async (req, res) => {
  * - step: Time bucket size in seconds (optional, default: 60)
  */
 router.get('/edges', async (req, res) => {
+  if (!config.telemetry.enabled) {
+    return res.status(503).json({ 
+      error: 'Telemetry endpoints disabled. Set TELEMETRY_ENABLED=true to enable.' 
+    });
+  }
+
   if (!influxClient) {
     return res.status(503).json({ 
       error: 'InfluxDB not configured. Set INFLUX_HOST, INFLUX_TOKEN, INFLUX_DATABASE' 
@@ -189,10 +201,10 @@ router.get('/edges', async (req, res) => {
       conditions.push(`"to" = '${toService.replaceAll("'", "''")}'`);
     }
 
-    // SQL query for InfluxDB 3
+    // SQL query for InfluxDB 3 (using DATE_BIN for time bucketing)
     const query = `
       SELECT 
-        time_bucket(INTERVAL '${stepSeconds} seconds', time) AS bucket,
+        DATE_BIN(INTERVAL '${stepSeconds} seconds', time, '1970-01-01T00:00:00Z'::TIMESTAMP) AS bucket,
         "from" AS from_service,
         "to" AS to_service,
         namespace,

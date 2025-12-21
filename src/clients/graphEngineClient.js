@@ -175,12 +175,24 @@ async function getServices() {
     return httpGet(url, config.graphApi.timeoutMs);
 }
 
+/**
+ * Get metrics snapshot (all services and edges in one call)
+ * Returns {services: [...], edges: [...], timestamp, window}
+ * @returns {Promise<ClientSuccess|ClientError>}
+ */
+async function getMetricsSnapshot() {
+    const baseUrl = normalizeBaseUrl(config.graphApi.baseUrl);
+    const url = `${baseUrl}/metrics/snapshot`;
+    return httpGet(url, config.graphApi.timeoutMs);
+}
+
 module.exports = {
     checkGraphHealth,
     getNeighborhood,
     getPeers,
     getCentralityTop,
     getServices,
+    getMetricsSnapshot,
     getBaseUrl,
     isEnabled,
     // Exported for testing

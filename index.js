@@ -86,6 +86,10 @@ app.get('/health', async (req, res) => {
                 maxTraversalDepth: config.simulation.maxTraversalDepth,
                 defaultLatencyMetric: config.simulation.defaultLatencyMetric
             },
+            telemetry: {
+                enabled: config.telemetry.enabled,
+                workerEnabled: config.telemetryWorker.enabled
+            },
             uptimeSeconds
         });
     } catch (error) {

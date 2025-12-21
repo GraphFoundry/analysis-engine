@@ -18,7 +18,9 @@ class InfluxWriter {
           token: config.influx.token,
           database: config.influx.database
         });
-        console.log(`[InfluxDB] Writer initialized for database: ${this.database}`);
+        // Note: InfluxDB 3 client uses nanosecond precision by default
+        // Timestamps in line protocol are automatically handled
+        console.log(`[InfluxDB] Writer initialized for database: ${this.database} (precision: nanoseconds)`);
       } catch (error) {
         console.error(`[InfluxDB] Failed to initialize client: ${error.message}`);
       }

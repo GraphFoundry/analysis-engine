@@ -12,6 +12,9 @@ class PollWorker {
     this.influxWriter = new InfluxWriter();
     this.intervalId = null;
     this.isRunning = false;
+    this.polling = false;
+    this.lastPollAt = null;
+    this.lastSuccessAt = null;
   }
 
   /**
@@ -64,43 +67,81 @@ class PollWorker {
    * Execute one poll cycle
    */
   async poll() {
+    // Overlap protection - skip if previous poll still running
+    if (this.polling) {
+      console.warn('[PollWorker] Previous poll still running, skipping this cycle');
+      return;
+    }
+
+    this.polling = true;
+    this.lastPollAt = new Date();
+
     try {
       console.log('[PollWorker] Polling Graph Engine...');
 
       // Try to get snapshot endpoint first (efficient single request)
-      let data;
-      try {
-        data = await graphEngineClient.getMetricsSnapshot();
+      let services = [];
+      let edges = [];
+
+      const snapshotResult = await graphEngineClient.getMetricsSnapshot();
+      
+      if (snapshotResult.ok && snapshotResult.data) {
         console.log('[PollWorker] Using /metrics/snapshot endpoint');
-      } catch (snapshotError) {
-        console.warn(`[PollWorker] Snapshot endpoint unavailable: ${snapshotError.message}`);
-        console.log('[PollWorker] Falling back to /services + /peers (expensive)');
+        services = snapshotResult.data.services || [];
+        edges = snapshotResult.data.edges || [];
+      } else {
+        console.warn(`[PollWorker] Snapshot endpoint failed: ${snapshotResult.error}`);
+        console.log('[PollWorker] Falling back to /services + individual peer calls (expensive)');
 
-        // Fallback to multi-request approach
-        const [services, peers] = await Promise.all([
-          graphEngineClient.getServices(),
-          graphEngineClient.getPeers()
-        ]);
+        // Fallback: Get services list
+        const servicesResult = await graphEngineClient.getServices();
+        if (!servicesResult.ok) {
+          throw new Error(`Failed to get services: ${servicesResult.error}`);
+        }
 
-        data = {
-          services: services.services || [],
-          peers: peers.peers || []
-        };
+        const servicesList = servicesResult.data.services || [];
+        services = servicesList;
+
+        // Build edges from individual peer calls (limit concurrency to 5)
+        const edgesMap = new Map();
+        const concurrencyLimit = 5;
+        
+        for (let i = 0; i < servicesList.length; i += concurrencyLimit) {
+          const batch = servicesList.slice(i, i + concurrencyLimit);
+          const peerResults = await Promise.all(
+            batch.map(async (svc) => {
+              const outResult = await graphEngineClient.getPeers(svc.name, 'out');
+              return outResult.ok ? outResult.data.peers || [] : [];
+            })
+          );
+
+          peerResults.flat().forEach(peer => {
+            const key = `${peer.from}->${peer.to}`;
+            if (!edgesMap.has(key)) {
+              edgesMap.set(key, peer);
+            }
+          });
+        }
+
+        edges = Array.from(edgesMap.values());
       }
 
       // Write to InfluxDB
-      if (data.services && data.services.length > 0) {
-        await this.influxWriter.writeServiceMetrics(data.services);
+      if (services.length > 0) {
+        await this.influxWriter.writeServiceMetrics(services);
       }
 
-      if (data.peers && data.peers.length > 0) {
-        await this.influxWriter.writeEdgeMetrics(data.peers);
+      if (edges.length > 0) {
+        await this.influxWriter.writeEdgeMetrics(edges);
       }
 
-      console.log(`[PollWorker] Poll complete: ${data.services?.length || 0} services, ${data.peers?.length || 0} edges`);
+      this.lastSuccessAt = new Date();
+      console.log(`[PollWorker] Poll complete: ${services.length} services, ${edges.length} edges`);
     } catch (error) {
       console.error(`[PollWorker] Poll failed: ${error.message}`);
       // Continue running despite errors
+    } finally {
+      this.polling = false;
     }
   }
 }

@@ -12,6 +12,7 @@ const { setupSwagger } = require('./src/utils/swagger');
 const { parseTraceOptions } = require('./src/utils/traceOptions');
 const { createTrace } = require('./src/utils/trace');
 const { getWorker } = require('./src/telemetry/pollWorker');
+const { getDecisionStore, closeDecisionStore } = require('./src/storage/decisionStoreSingleton');
 const {
     parseServiceIdentifier,
     normalizePodParams,
@@ -227,6 +228,36 @@ app.post('/simulate/failure', simulationRateLimiter, async (req, res) => {
             result.correlationId = req.correlationId;
         }
         
+        // Auto-log decision to SQLite (best-effort, silent failure)
+        const decisionStore = getDecisionStore();
+        if (decisionStore) {
+            try {
+                const inserted = decisionStore.logDecision({
+                    timestamp: new Date().toISOString(),
+                    type: 'failure',
+                    scenario: {
+                        serviceId: identifier.serviceId,
+                        maxDepth: resolvedMaxDepth
+                    },
+                    result: {
+                        totalLostTrafficRps: result.totalLostTrafficRps,
+                        affectedCallersCount: result.affectedCallers?.length || 0,
+                        affectedDownstreamCount: result.affectedDownstream?.length || 0,
+                        unreachableCount: result.unreachableServices?.length || 0,
+                        confidence: result.confidence
+                    },
+                    correlationId: req.correlationId
+                });
+                
+                // Debug logging (guarded by env var)
+                if (process.env.DEBUG_DECISIONS === 'true') {
+                    console.log(`[DecisionStore Debug] Auto-logged failure: id=${inserted.id}, serviceId=${identifier.serviceId}`);
+                }
+            } catch (error_) {
+                console.error('[DecisionStore] Auto-log failed (non-blocking):', error_.message);
+            }
+        }
+        
         res.json(result);
     } catch (error) {
         // Handle errors with explicit statusCode (e.g., stale graph data)
@@ -325,6 +356,38 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
             result.correlationId = req.correlationId;
         }
         
+        // Auto-log decision to SQLite (best-effort, silent failure)
+        const decisionStore = getDecisionStore();
+        if (decisionStore) {
+            try {
+                const inserted = decisionStore.logDecision({
+                    timestamp: new Date().toISOString(),
+                    type: 'scaling',
+                    scenario: {
+                        serviceId: identifier.serviceId,
+                        currentPods: req.body.currentPods,
+                        newPods,
+                        latencyMetric: resolvedLatencyMetric,
+                        maxDepth: resolvedMaxDepth
+                    },
+                    result: {
+                        predictedLatencyReduction: result.predictedLatencyReduction,
+                        latencyMetric: result.latencyMetric,
+                        affectedDownstreamCount: result.affectedDownstream?.length || 0,
+                        confidence: result.confidence
+                    },
+                    correlationId: req.correlationId
+                });
+                
+                // Debug logging (guarded by env var)
+                if (process.env.DEBUG_DECISIONS === 'true') {
+                    console.log(`[DecisionStore Debug] Auto-logged scaling: id=${inserted.id}, serviceId=${identifier.serviceId}`);
+                }
+            } catch (error_) {
+                console.error('[DecisionStore] Auto-log failed (non-blocking):', error_.message);
+            }
+        }
+        
         res.json(result);
     } catch (error) {
         // Handle errors with explicit statusCode (e.g., stale graph data)
@@ -354,7 +417,7 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
 app.get('/risk/services/top', async (req, res) => {
     try {
         const metric = req.query.metric || 'pagerank';
-        const limit = Math.min(Math.max(parseInt(req.query.limit) || 5, 1), 20);
+        const limit = Math.min(Math.max(Number.parseInt(req.query.limit) || 5, 1), 20);
         
         const result = await getTopRiskServices({ metric, limit });
         
@@ -390,6 +453,9 @@ const server = app.listen(config.server.port, () => {
     console.log(`Scaling model: ${config.simulation.scalingModel} (alpha: ${config.simulation.scalingAlpha})`);
     console.log(`Timeout: ${config.simulation.timeoutMs}ms`);
     
+    // Initialize DecisionStore singleton at startup
+    getDecisionStore();
+    
     // Start background telemetry poll worker
     const pollWorker = getWorker();
     pollWorker.start();
@@ -402,6 +468,9 @@ const shutdown = async () => {
     // Stop poll worker
     const pollWorker = getWorker();
     await pollWorker.stop();
+    
+    // Close decision store
+    await closeDecisionStore();
     
     server.close();
     const provider = getProvider();

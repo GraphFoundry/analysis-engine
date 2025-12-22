@@ -87,8 +87,44 @@ class PollWorker {
       
       if (snapshotResult.ok && snapshotResult.data) {
         console.log('[PollWorker] Using /metrics/snapshot endpoint');
-        services = snapshotResult.data.services || [];
-        edges = snapshotResult.data.edges || [];
+        
+        // Transform Graph Engine schema to InfluxDB schema
+        // Graph Engine returns: {rps, errorRate, p95}
+        // InfluxDB expects: {requestRate, errorRate, p50, p95, p99, availability}
+        //
+        // Policy: Graph Engine defaults missing Neo4j values to 0 (upstream issue).
+        // When rps=0, preserve requestRate=0 (shows "idle") but null latency/error/availability (no meaningful data).
+        services = (snapshotResult.data.services || []).map(svc => {
+          // Preserve requestRate even when 0 (shows idle vs no-data)
+          // But null latency/error/availability when no traffic (avoid fake zeros)
+          const hasTraffic = svc.rps && svc.rps > 0;
+          
+          return {
+            name: svc.name,
+            namespace: svc.namespace,
+            requestRate: svc.rps ?? null,  // Preserve 0 to show "idle"
+            errorRate: hasTraffic ? svc.errorRate : null,
+            p50: null,  // Not available from Graph Engine
+            p95: hasTraffic ? svc.p95 : null,
+            p99: null,  // Not available from Graph Engine
+            availability: null  // Not available from Graph Engine
+          };
+        });
+        
+        edges = (snapshotResult.data.edges || []).map(edge => {
+          const hasTraffic = edge.rps && edge.rps > 0;
+          
+          return {
+            from: edge.from,
+            to: edge.to,
+            namespace: edge.namespace,
+            requestRate: edge.rps ?? null,  // Preserve 0 to show "idle"
+            errorRate: hasTraffic ? edge.errorRate : null,
+            p50: null,
+            p95: hasTraffic ? edge.p95 : null,
+            p99: null
+          };
+        });
       } else {
         console.warn(`[PollWorker] Snapshot endpoint failed: ${snapshotResult.error}`);
         console.log('[PollWorker] Falling back to /services + individual peer calls (expensive)');

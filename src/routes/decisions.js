@@ -6,22 +6,17 @@
 
 const express = require('express');
 const router = express.Router();
-const DecisionStore = require('../storage/decisionStore');
-const config = require('../config/config');
+const { getDecisionStore } = require('../storage/decisionStoreSingleton');
 
-// Initialize decision store (singleton)
-let decisionStore;
-try {
-  decisionStore = new DecisionStore(config.sqlite.dbPath);
-} catch (error) {
-  console.error(`Failed to initialize DecisionStore: ${error.message}`);
-}
+// Get singleton decision store
+const getStore = () => getDecisionStore();
 
 /**
  * POST /decisions/log
  * Log a decision from Pipeline Playground
  */
 router.post('/log', (req, res) => {
+  const decisionStore = getStore();
   if (!decisionStore) {
     return res.status(503).json({ 
       error: 'Decision store not available. Check SQLite configuration.' 
@@ -53,7 +48,8 @@ router.post('/log', (req, res) => {
       });
     }
 
-    const inserted = decisionStore.logDecision({
+    const store = getStore();
+    const inserted = store.logDecision({
       timestamp,
       type,
       scenario,
@@ -73,6 +69,7 @@ router.post('/log', (req, res) => {
  * Get decision history with pagination and optional type filter
  */
 router.get('/history', (req, res) => {
+  const decisionStore = getStore();
   if (!decisionStore) {
     return res.status(503).json({ 
       error: 'Decision store not available. Check SQLite configuration.' 
@@ -85,8 +82,9 @@ router.get('/history', (req, res) => {
     const { type } = req.query;
 
     // Get decisions and total count
-    const decisions = decisionStore.getHistory({ limit, offset, type });
-    const total = decisionStore.getCount(type);
+    const store = getStore();
+    const decisions = store.getHistory({ limit, offset, type });
+    const total = store.getCount(type);
 
     res.json({
       decisions,

@@ -71,9 +71,9 @@ router.get('/service', async (req, res) => {
     const { service, from, to, step } = req.query;
 
     // Validate required params
-    if (!service || !from || !to) {
+    if (!from || !to) {
       return res.status(400).json({ 
-        error: 'Missing required parameters: service, from, to' 
+        error: 'Missing required parameters: from, to' 
       });
     }
 
@@ -88,6 +88,7 @@ router.get('/service', async (req, res) => {
     const stepSeconds = Number.parseInt(step) || 60;
 
     // SQL query for InfluxDB 3 (using DATE_BIN for time bucketing)
+    const serviceFilter = service ? `service = '${service.replaceAll("'", "''")}'` : '1=1';
     const query = `
       SELECT 
         DATE_BIN(INTERVAL '${stepSeconds} seconds', time, '1970-01-01T00:00:00Z'::TIMESTAMP) AS bucket,
@@ -100,7 +101,7 @@ router.get('/service', async (req, res) => {
         AVG(p99) AS avg_p99,
         AVG(availability) AS avg_availability
       FROM service_metrics
-      WHERE service = '${service.replaceAll("'", "''")}'
+      WHERE ${serviceFilter}
         AND time >= '${from}'
         AND time < '${to}'
       GROUP BY bucket, service, namespace
@@ -125,7 +126,7 @@ router.get('/service', async (req, res) => {
     }
 
     res.json({
-      service,
+      service: service || 'all',
       from,
       to,
       step: stepSeconds,

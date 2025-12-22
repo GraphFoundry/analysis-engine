@@ -540,12 +540,13 @@ paths:
       description: |
         Retrieves time-series metrics for a specific service from InfluxDB 3.
         Maximum time range is 7 days. Returns data points bucketed by step interval.
+        If service parameter is omitted, returns metrics for all services.
       operationId: getTelemetryService
       parameters:
         - name: service
           in: query
-          required: true
-          description: Service name to query metrics for
+          required: false
+          description: Service name to query metrics for (optional). If omitted, returns metrics for all services.
           schema:
             type: string
           example: productcatalogservice

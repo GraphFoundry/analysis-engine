@@ -2,7 +2,7 @@ const express = require('express');
 const config = require('./src/config/config');
 const { validateEnv } = require('./src/config/config');
 const { getProvider } = require('./src/storage/providers');
-const { checkGraphHealth, getServices } = require('./src/clients/graphEngineClient');
+const { checkGraphHealth, getServices, getMetricsSnapshot } = require('./src/clients/graphEngineClient');
 const { simulateFailure } = require('./src/simulation/failureSimulation');
 const { simulateScaling } = require('./src/simulation/scalingSimulation');
 const { getTopRiskServices } = require('./src/simulation/riskAnalysis');
@@ -45,21 +45,21 @@ const startTime = Date.now();
 app.get('/health', async (req, res) => {
     try {
         const uptimeSeconds = Math.round((Date.now() - startTime) / 100) / 10;
-        
+
         // Check Graph Engine health
         const graphResult = await checkGraphHealth();
-        
+
         let status = 'ok';
         let graphApi;
-        
+
         if (graphResult.ok) {
             const { stale, lastUpdatedSecondsAgo } = graphResult.data;
-            
+
             // Status is degraded if graph is stale
             if (stale) {
                 status = 'degraded';
             }
-            
+
             graphApi = {
                 connected: true,
                 status: graphResult.data.status,
@@ -111,9 +111,10 @@ app.get('/health', async (req, res) => {
  */
 app.get('/services', async (req, res) => {
     try {
-        // Fetch services and health in parallel
-        const [servicesResult, healthResult] = await Promise.all([
-            getServices(),
+        // Fetch snapshot (services + edges) and health in parallel
+        // We use getMetricsSnapshot because it returns the edges, unlike getServices
+        const [snapshotResult, healthResult] = await Promise.all([
+            getMetricsSnapshot(),
             checkGraphHealth()
         ]);
 
@@ -128,33 +129,70 @@ app.get('/services', async (req, res) => {
             windowMinutes = healthResult.data.windowMinutes ?? 5;
         }
 
-        // Handle services fetch failure
-        if (!servicesResult.ok) {
-            return res.status(503).json({
-                error: servicesResult.error || 'Failed to fetch services from Graph Engine',
-                services: [],
-                count: 0,
-                stale: true,
-                lastUpdatedSecondsAgo: null,
+        // Handle snapshot fetch failure
+        if (!snapshotResult.ok) {
+            // Fallback: try basic getServices if snapshot fails (e.g. no metrics yet)
+            console.warn('Snapshot failed, falling back to basic services list:', snapshotResult.error);
+            const servicesResult = await getServices();
+
+            if (!servicesResult.ok) {
+                return res.status(503).json({
+                    error: servicesResult.error || 'Failed to fetch services from Graph Engine',
+                    services: [],
+                    count: 0,
+                    stale: true,
+                    lastUpdatedSecondsAgo: null,
+                    windowMinutes
+                });
+            }
+
+            const rawServices = servicesResult.data?.services || [];
+            const services = rawServices.map(svc => ({
+                serviceId: `${svc.namespace || 'default'}:${svc.name}`,
+                name: svc.name,
+                namespace: svc.namespace || 'default'
+            }));
+
+            return res.json({
+                services,
+                count: services.length,
+                stale,
+                lastUpdatedSecondsAgo,
                 windowMinutes
             });
         }
 
-        // Normalize services to include serviceId
-        const rawServices = servicesResult.data?.services || [];
+        // Process Snapshot Data
+        const rawServices = snapshotResult.data?.services || [];
+        const rawEdges = snapshotResult.data?.edges || [];
+
         const services = rawServices.map(svc => ({
             serviceId: `${svc.namespace || 'default'}:${svc.name}`,
             name: svc.name,
             namespace: svc.namespace || 'default'
         }));
 
+        const serviceMap = new Map();
+        services.forEach(s => serviceMap.set(s.name, s.namespace));
+
+        const edges = rawEdges.map(e => {
+            const fromNs = serviceMap.get(e.from) || 'default';
+            const toNs = e.namespace || 'default';
+            return {
+                source: `${fromNs}:${e.from}`,
+                target: `${toNs}:${e.to}`
+            };
+        });
+
         res.json({
             services,
             count: services.length,
             stale,
             lastUpdatedSecondsAgo,
-            windowMinutes
+            windowMinutes,
+            edges
         });
+
     } catch (error) {
         // Graph Engine unreachable - return 503 with empty services
         res.status(503).json({
@@ -186,7 +224,7 @@ app.post('/simulate/failure', simulationRateLimiter, async (req, res) => {
         // Parse trace options from query string
         const traceOptions = parseTraceOptions(req.query);
         const trace = createTrace(traceOptions);
-        
+
         // Validate and parse request (inside trace stage)
         const { identifier, maxDepth: resolvedMaxDepth } = await trace.stage('scenario-parse', async () => {
             const id = parseServiceIdentifier(req.body);
@@ -197,13 +235,13 @@ app.post('/simulate/failure', simulationRateLimiter, async (req, res) => {
             );
             return { identifier: id, maxDepth: depth };
         });
-        
+
         // Add scenario-parse summary to trace
         trace.setSummary('scenario-parse', {
             serviceIdResolved: identifier.serviceId,
             maxDepth: resolvedMaxDepth
         });
-        
+
         // Execute simulation with timeout
         const simulationPromise = simulateFailure({
             serviceId: identifier.serviceId,
@@ -213,21 +251,21 @@ app.post('/simulate/failure', simulationRateLimiter, async (req, res) => {
             trace,
             correlationId: req.correlationId
         });
-        
+
         const timeoutPromise = new Promise((_, reject) => {
             setTimeout(
                 () => reject(new Error('Simulation timeout exceeded')),
                 config.simulation.timeoutMs
             );
         });
-        
+
         const result = await Promise.race([simulationPromise, timeoutPromise]);
-        
+
         // Add correlationId to body only when trace enabled
         if (traceOptions.trace && req.correlationId) {
             result.correlationId = req.correlationId;
         }
-        
+
         // Auto-log decision to SQLite (best-effort, silent failure)
         const decisionStore = getDecisionStore();
         if (decisionStore) {
@@ -248,7 +286,7 @@ app.post('/simulate/failure', simulationRateLimiter, async (req, res) => {
                     },
                     correlationId: req.correlationId
                 });
-                
+
                 // Debug logging (guarded by env var)
                 if (process.env.DEBUG_DECISIONS === 'true') {
                     console.log(`[DecisionStore Debug] Auto-logged failure: id=${inserted.id}, serviceId=${identifier.serviceId}`);
@@ -257,7 +295,7 @@ app.post('/simulate/failure', simulationRateLimiter, async (req, res) => {
                 console.error('[DecisionStore] Auto-log failed (non-blocking):', error_.message);
             }
         }
-        
+
         res.json(result);
     } catch (error) {
         // Handle errors with explicit statusCode (e.g., stale graph data)
@@ -295,7 +333,7 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
         // Parse trace options from query string
         const traceOptions = parseTraceOptions(req.query);
         const trace = createTrace(traceOptions);
-        
+
         // Validate and parse request (inside trace stage)
         const { identifier, newPods, latencyMetric: resolvedLatencyMetric, maxDepth: resolvedMaxDepth, model: resolvedModel } = await trace.stage('scenario-parse', async () => {
             const id = parseServiceIdentifier(req.body);
@@ -311,15 +349,15 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
                 config.simulation.maxTraversalDepth
             );
             const m = validateScalingModel(req.body.model);
-            return { 
-                identifier: id, 
-                newPods: pods, 
-                latencyMetric: metric, 
-                maxDepth: depth, 
-                model: m 
+            return {
+                identifier: id,
+                newPods: pods,
+                latencyMetric: metric,
+                maxDepth: depth,
+                model: m
             };
         });
-        
+
         // Add scenario-parse summary to trace
         trace.setSummary('scenario-parse', {
             serviceIdResolved: identifier.serviceId,
@@ -327,7 +365,7 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
             latencyMetric: resolvedLatencyMetric,
             model: resolvedModel
         });
-        
+
         // Execute simulation with timeout
         const simulationPromise = simulateScaling({
             serviceId: identifier.serviceId,
@@ -341,21 +379,21 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
             trace,
             correlationId: req.correlationId
         });
-        
+
         const timeoutPromise = new Promise((_, reject) => {
             setTimeout(
                 () => reject(new Error('Simulation timeout exceeded')),
                 config.simulation.timeoutMs
             );
         });
-        
+
         const result = await Promise.race([simulationPromise, timeoutPromise]);
-        
+
         // Add correlationId to body only when trace enabled
         if (traceOptions.trace && req.correlationId) {
             result.correlationId = req.correlationId;
         }
-        
+
         // Auto-log decision to SQLite (best-effort, silent failure)
         const decisionStore = getDecisionStore();
         if (decisionStore) {
@@ -378,7 +416,7 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
                     },
                     correlationId: req.correlationId
                 });
-                
+
                 // Debug logging (guarded by env var)
                 if (process.env.DEBUG_DECISIONS === 'true') {
                     console.log(`[DecisionStore Debug] Auto-logged scaling: id=${inserted.id}, serviceId=${identifier.serviceId}`);
@@ -387,7 +425,7 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
                 console.error('[DecisionStore] Auto-log failed (non-blocking):', error_.message);
             }
         }
-        
+
         res.json(result);
     } catch (error) {
         // Handle errors with explicit statusCode (e.g., stale graph data)
@@ -418,9 +456,9 @@ app.get('/risk/services/top', async (req, res) => {
     try {
         const metric = req.query.metric || 'pagerank';
         const limit = Math.min(Math.max(Number.parseInt(req.query.limit) || 5, 1), 20);
-        
+
         const result = await getTopRiskServices({ metric, limit });
-        
+
         res.json(result);
     } catch (error) {
         if (error.message.includes('Invalid metric')) {
@@ -452,10 +490,10 @@ const server = app.listen(config.server.port, () => {
     console.log(`Default latency metric: ${config.simulation.defaultLatencyMetric}`);
     console.log(`Scaling model: ${config.simulation.scalingModel} (alpha: ${config.simulation.scalingAlpha})`);
     console.log(`Timeout: ${config.simulation.timeoutMs}ms`);
-    
+
     // Initialize DecisionStore singleton at startup
     getDecisionStore();
-    
+
     // Start background telemetry poll worker
     const pollWorker = getWorker();
     pollWorker.start();
@@ -464,14 +502,14 @@ const server = app.listen(config.server.port, () => {
 // Graceful shutdown
 const shutdown = async () => {
     console.log('\nShutting down service...');
-    
+
     // Stop poll worker
     const pollWorker = getWorker();
     await pollWorker.stop();
-    
+
     // Close decision store
     await closeDecisionStore();
-    
+
     server.close();
     const provider = getProvider();
     await provider.close();

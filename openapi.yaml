@@ -9,7 +9,7 @@ info:
     - Graph Engine API (service-graph-engine) - single source of truth for topology and metrics
     
     **Note:** Swagger UI is disabled by default. Set `ENABLE_SWAGGER=true` to enable.
-  version: 1.2.0
+  version: 1.3.0
   contact:
     name: Team Alpha Zero
   license:
@@ -37,6 +37,8 @@ tags:
     description: Time-series metrics from InfluxDB
   - name: Decisions
     description: Decision logging and history
+  - name: Graph
+    description: Dependency graph snapshot with telemetry
 
 paths:
   /health:
@@ -700,6 +702,103 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+
+  /api/dependency-graph/snapshot:
+    get:
+      tags:
+        - Graph
+      summary: Get enriched dependency graph snapshot with telemetry
+      description: |
+        Returns the complete dependency graph with enriched node and edge telemetry data.
+        This endpoint is optimized for the Incident Explorer UI to provide comprehensive
+        graph visualization data in a single request.
+        
+        **Node Data Includes:**
+        - Service identity (id, name, namespace)
+        - Risk level and reason (CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN)
+        - Aggregated telemetry metrics (request rate, error rate, latency, availability)
+        
+        **Edge Data Includes:**
+        - Source and target service IDs
+        - Optional edge telemetry (if available from Graph Engine)
+        
+        **Metadata Includes:**
+        - Data freshness information
+        - Last update timestamp
+        - Total node and edge counts
+      operationId: getDependencyGraphSnapshot
+      parameters:
+        - name: range
+          in: query
+          required: false
+          description: Time range for metrics (informational only, currently not implemented)
+          schema:
+            type: string
+            example: "1h"
+        - name: namespace
+          in: query
+          required: false
+          description: Filter nodes by namespace
+          schema:
+            type: string
+            example: "default"
+      responses:
+        '200':
+          description: Enriched graph snapshot with nodes, edges, and metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphSnapshotResponse'
+              example:
+                nodes:
+                  - id: "default:frontend"
+                    name: "frontend"
+                    namespace: "default"
+                    riskLevel: "LOW"
+                    riskReason: "Operating normally"
+                    reqRate: 150.5
+                    errorRatePct: 0.2
+                    latencyP95Ms: 45.3
+                    availabilityPct: 99.9
+                    updatedAt: "2026-01-04T10:00:00Z"
+                  - id: "default:backend"
+                    name: "backend"
+                    namespace: "default"
+                    riskLevel: "MEDIUM"
+                    riskReason: "Elevated error rate (1.5%)"
+                    reqRate: 200.0
+                    errorRatePct: 1.5
+                    latencyP95Ms: 120.0
+                    availabilityPct: 99.5
+                    updatedAt: "2026-01-04T10:00:00Z"
+                edges:
+                  - id: "default:frontend->default:backend"
+                    source: "default:frontend"
+                    target: "default:backend"
+                    reqRate: 150.5
+                    errorRatePct: 0.5
+                    latencyP95Ms: 55.2
+                metadata:
+                  stale: false
+                  lastUpdatedSecondsAgo: 30
+                  windowMinutes: 5
+                  nodeCount: 2
+                  edgeCount: 1
+                  generatedAt: "2026-01-04T10:00:00Z"
+        '503':
+          description: Graph Engine unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphSnapshotErrorResponse'
+              example:
+                error: "Failed to fetch graph snapshot from Graph Engine"
+                nodes: []
+                edges: []
+                metadata:
+                  stale: true
+                  lastUpdatedSecondsAgo: null
+                  windowMinutes: 5
 
   /decisions/history:
     get:
@@ -1480,3 +1579,153 @@ components:
               type: integer
             total:
               type: integer
+    GraphNode:
+      type: object
+      description: Enriched graph node with telemetry
+      required:
+        - id
+        - name
+        - namespace
+        - riskLevel
+      properties:
+        id:
+          type: string
+          description: Unique node identifier (namespace:name)
+          example: "default:frontend"
+        name:
+          type: string
+          description: Service name
+          example: "frontend"
+        namespace:
+          type: string
+          description: Kubernetes namespace
+          example: "default"
+        riskLevel:
+          type: string
+          enum: [CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN]
+          description: Calculated risk level based on metrics
+        riskReason:
+          type: string
+          description: Human-readable explanation of risk level
+          example: "High error rate (6.2%)"
+        reqRate:
+          type: number
+          description: Requests per second
+          example: 150.5
+        errorRatePct:
+          type: number
+          description: Error rate as percentage
+          example: 0.2
+        latencyP95Ms:
+          type: number
+          description: 95th percentile latency in milliseconds
+          example: 45.3
+        availabilityPct:
+          type: number
+          description: Availability percentage
+          example: 99.9
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp of last metric update
+
+    GraphEdge:
+      type: object
+      description: Enriched graph edge with optional telemetry
+      required:
+        - id
+        - source
+        - target
+      properties:
+        id:
+          type: string
+          description: Unique edge identifier
+          example: "default:frontend->default:backend"
+        source:
+          type: string
+          description: Source node ID (namespace:name)
+          example: "default:frontend"
+        target:
+          type: string
+          description: Target node ID (namespace:name)
+          example: "default:backend"
+        reqRate:
+          type: number
+          description: Requests per second on this edge
+          example: 150.5
+        errorRatePct:
+          type: number
+          description: Error rate as percentage on this edge
+          example: 0.5
+        latencyP95Ms:
+          type: number
+          description: 95th percentile latency in milliseconds on this edge
+          example: 55.2
+
+    GraphSnapshotMetadata:
+      type: object
+      description: Metadata about graph snapshot freshness and size
+      properties:
+        stale:
+          type: boolean
+          description: Whether the graph data is stale
+        lastUpdatedSecondsAgo:
+          type: number
+          nullable: true
+          description: Seconds since last update from Graph Engine
+        windowMinutes:
+          type: integer
+          description: Metrics aggregation window in minutes
+        nodeCount:
+          type: integer
+          description: Total number of nodes in snapshot
+        edgeCount:
+          type: integer
+          description: Total number of edges in snapshot
+        generatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when snapshot was generated
+
+    GraphSnapshotResponse:
+      type: object
+      description: Complete dependency graph snapshot with enriched telemetry
+      required:
+        - nodes
+        - edges
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphNode'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphEdge'
+        metadata:
+          $ref: '#/components/schemas/GraphSnapshotMetadata'
+
+    GraphSnapshotErrorResponse:
+      type: object
+      description: Error response when graph snapshot cannot be fetched
+      required:
+        - error
+        - nodes
+        - edges
+        - metadata
+      properties:
+        error:
+          type: string
+          description: Error message
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphNode'
+          description: Empty array on error
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphEdge'
+          description: Empty array on error
+        metadata:
+          $ref: '#/components/schemas/GraphSnapshotMetadata'

@@ -21,6 +21,7 @@ const {
     validateDepth,
     validateScalingModel
 } = require('./src/utils/validator');
+const dependencyGraphRouter = require('./src/routes/dependencyGraph');
 
 // Validate environment before starting server
 validateEnv();
@@ -33,6 +34,9 @@ setupSwagger(app);
 
 // Correlation ID middleware (generates UUID, sets X-Correlation-Id header, logs requests)
 app.use(correlationMiddleware());
+
+// Mount dependency graph routes
+app.use('/api/dependency-graph', dependencyGraphRouter);
 
 // Track server start time
 const startTime = Date.now();

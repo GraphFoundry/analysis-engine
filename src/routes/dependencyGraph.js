@@ -50,13 +50,25 @@ router.get('/snapshot', async (req, res) => {
 
         const rawServices = snapshotResult.data?.services || [];
         const rawEdges = snapshotResult.data?.edges || [];
-        const rawMetrics = snapshotResult.data?.metrics || {};
 
-        // Build service name -> namespace map
+        // Build service name -> namespace map AND metrics map
         const serviceMap = new Map();
+        const metricsMap = new Map(); // Key: service name, Value: metrics
+
         rawServices.forEach(svc => {
             const ns = svc.namespace || 'default';
             serviceMap.set(svc.name, ns);
+            
+            // Extract metrics from service object
+            // Graph Engine returns: { name, namespace, rps, errorRate, p95 }
+            // We need to map to: { requestRate, errorRate, p95, availability }
+            metricsMap.set(svc.name, {
+                requestRate: svc.rps || 0,
+                errorRate: svc.errorRate ? svc.errorRate * 100 : 0, // Convert to percentage
+                p95: svc.p95 || 0,
+                // availability not provided by Graph Engine - calculate if possible
+                availability: calculateAvailability(svc.errorRate)
+            });
         });
 
         // Enrich nodes with telemetry
@@ -65,7 +77,7 @@ router.get('/snapshot', async (req, res) => {
             .map(svc => {
                 const ns = svc.namespace || 'default';
                 const nodeId = `${ns}:${svc.name}`;
-                const metrics = rawMetrics[svc.name] || {};
+                const metrics = metricsMap.get(svc.name) || {};
 
                 // Calculate risk level based on metrics
                 const riskLevel = calculateRiskLevel(metrics);
@@ -107,6 +119,14 @@ router.get('/snapshot', async (req, res) => {
                 };
             });
 
+        // Count nodes and edges with metrics (for debugging)
+        const nodesWithMetrics = nodes.filter(n => 
+            n.reqRate !== undefined || n.errorRatePct !== undefined || n.latencyP95Ms !== undefined
+        ).length;
+        const edgesWithMetrics = edges.filter(e => 
+            e.reqRate !== undefined || e.errorRatePct !== undefined || e.latencyP95Ms !== undefined
+        ).length;
+
         res.json({
             nodes,
             edges,
@@ -116,6 +136,8 @@ router.get('/snapshot', async (req, res) => {
                 windowMinutes,
                 nodeCount: nodes.length,
                 edgeCount: edges.length,
+                nodesWithMetrics,
+                edgesWithMetrics,
                 generatedAt: new Date().toISOString()
             }
         });
@@ -134,6 +156,16 @@ router.get('/snapshot', async (req, res) => {
         });
     }
 });
+
+/**
+ * Calculate availability percentage from error rate
+ * @param {number} errorRate - Error rate as decimal (e.g., 0.002 = 0.2%)
+ * @returns {number} - Availability percentage
+ */
+function calculateAvailability(errorRate) {
+    if (typeof errorRate !== 'number') return 100;
+    return errorRate > 0 ? (1 - errorRate) * 100 : 100;
+}
 
 /**
  * Calculate risk level based on telemetry metrics

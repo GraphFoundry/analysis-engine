@@ -154,7 +154,9 @@ app.get('/services', async (req, res) => {
             const services = rawServices.map(svc => ({
                 serviceId: `${svc.namespace || 'default'}:${svc.name}`,
                 name: svc.name,
-                namespace: svc.namespace || 'default'
+                namespace: svc.namespace || 'default',
+                ...(svc.podCount !== undefined && { podCount: svc.podCount }),
+                ...(svc.availability !== undefined && { availability: svc.availability })
             }));
 
             return res.json({
@@ -173,7 +175,9 @@ app.get('/services', async (req, res) => {
         const services = rawServices.map(svc => ({
             serviceId: `${svc.namespace || 'default'}:${svc.name}`,
             name: svc.name,
-            namespace: svc.namespace || 'default'
+            namespace: svc.namespace || 'default',
+            ...(svc.podCount !== undefined && { podCount: svc.podCount }),
+            ...(svc.availability !== undefined && { availability: svc.availability })
         }));
 
         const serviceMap = new Map();

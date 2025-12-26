@@ -60,14 +60,13 @@ router.get('/snapshot', async (req, res) => {
             serviceMap.set(svc.name, ns);
             
             // Extract metrics from service object
-            // Graph Engine returns: { name, namespace, rps, errorRate, p95 }
-            // We need to map to: { requestRate, errorRate, p95, availability }
+            // Graph Engine returns: { name, namespace, rps, errorRate, p95, podCount, availability }
             metricsMap.set(svc.name, {
                 requestRate: svc.rps || 0,
                 errorRate: svc.errorRate ? svc.errorRate * 100 : 0, // Convert to percentage
                 p95: svc.p95 || 0,
-                // availability not provided by Graph Engine - calculate if possible
-                availability: calculateAvailability(svc.errorRate)
+                podCount: svc.podCount ?? 0,
+                availability: svc.availability !== undefined ? svc.availability * 100 : null // Convert 0-1 to percentage
             });
         });
 
@@ -94,6 +93,8 @@ router.get('/snapshot', async (req, res) => {
                     errorRatePct: metrics.errorRate ?? undefined,
                     latencyP95Ms: metrics.p95 ?? undefined,
                     availabilityPct: metrics.availability ?? undefined,
+                    podCount: metrics.podCount ?? undefined,
+                    availability: svc.availability ?? undefined, // 0-1 score from Graph Engine
                     updatedAt: new Date().toISOString()
                 };
             });
@@ -177,17 +178,24 @@ function calculateRiskLevel(metrics) {
         return 'UNKNOWN';
     }
 
-    const { errorRate, availability, p95 } = metrics;
+    const { errorRate, availability, p95, podCount } = metrics;
 
+    // Critical conditions
+    if (podCount === 0) return 'CRITICAL';
+    if (availability !== null && availability !== undefined && availability < 50) return 'CRITICAL';
+    
     // High risk conditions
     if (errorRate > 5) return 'HIGH';
-    if (availability < 95) return 'CRITICAL';
+    if (availability !== null && availability !== undefined && availability < 95) return 'HIGH';
     if (p95 > 1000) return 'HIGH';
 
     // Medium risk conditions
     if (errorRate > 1) return 'MEDIUM';
-    if (availability < 99) return 'MEDIUM';
+    if (availability !== null && availability !== undefined && availability < 99) return 'MEDIUM';
     if (p95 > 500) return 'MEDIUM';
+
+    // No metrics available
+    if (availability === null || availability === undefined) return 'UNKNOWN';
 
     return 'LOW';
 }
@@ -202,14 +210,18 @@ function getRiskReason(metrics) {
         return 'No recent metrics available';
     }
 
-    const { errorRate, availability, p95 } = metrics;
+    const { errorRate, availability, p95, podCount } = metrics;
 
+    if (podCount === 0) return 'No pods running';
+    if (availability !== null && availability !== undefined && availability < 50) return `Critical availability (${availability.toFixed(1)}%)`;
     if (errorRate > 5) return `High error rate (${errorRate.toFixed(2)}%)`;
-    if (availability < 95) return `Low availability (${availability.toFixed(2)}%)`;
+    if (availability !== null && availability !== undefined && availability < 95) return `Low availability (${availability.toFixed(1)}%)`;
     if (p95 > 1000) return `P95 latency spike (${p95.toFixed(0)}ms)`;
     if (errorRate > 1) return `Elevated error rate (${errorRate.toFixed(2)}%)`;
-    if (availability < 99) return `Availability degraded (${availability.toFixed(2)}%)`;
+    if (availability !== null && availability !== undefined && availability < 99) return `Availability degraded (${availability.toFixed(1)}%)`;
     if (p95 > 500) return `Slow responses (${p95.toFixed(0)}ms)`;
+
+    if (availability === null || availability === undefined) return 'No traffic metrics';
 
     return 'Operating normally';
 }

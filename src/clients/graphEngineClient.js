@@ -12,9 +12,135 @@ const config = require('../config/config');
 /**
  * @typedef {Object} GraphHealthResponse
  * @property {string} status - Health status ("OK")
- * @property {number|null} lastUpdatedSecondsAgo - Seconds since last graph update
+ * @property {number} lastUpdatedSecondsAgo - Seconds since last graph update
  * @property {number} windowMinutes - Aggregation window in minutes
  * @property {boolean} stale - Whether the graph data is stale
+ */
+
+/**
+ * @typedef {Object} ServiceInfo
+ * @property {string} name - Service name
+ * @property {string} namespace - Kubernetes namespace
+ * @property {number} podCount - Number of pods running
+ * @property {number} availability - Availability score (0-1)
+ */
+
+/**
+ * @typedef {Object} ServicesResponse
+ * @property {Array<ServiceInfo>} services - List of services
+ */
+
+/**
+ * @typedef {Object} EdgeMetrics
+ * @property {number} rate - Request rate (requests per second)
+ * @property {number} p50 - 50th percentile latency (ms)
+ * @property {number} p95 - 95th percentile latency (ms)
+ * @property {number} p99 - 99th percentile latency (ms)
+ * @property {number} errorRate - Error rate (0-1)
+ */
+
+/**
+ * @typedef {Object} Edge
+ * @property {string} from - Source service name
+ * @property {string} to - Target service name
+ * @property {number} rate - Request rate
+ * @property {number} errorRate - Error rate
+ * @property {number} p50 - 50th percentile latency
+ * @property {number} p95 - 95th percentile latency
+ * @property {number} p99 - 99th percentile latency
+ */
+
+/**
+ * @typedef {Object} Node
+ * @property {string} name - Service name
+ * @property {string} namespace - Kubernetes namespace
+ * @property {number} podCount - Number of pods
+ * @property {number} availability - Availability score (0-1)
+ */
+
+/**
+ * @typedef {Object} NeighborhoodResponse
+ * @property {string} center - Center service name
+ * @property {number} k - Number of hops
+ * @property {Array<Node>} nodes - List of nodes in neighborhood
+ * @property {Array<Edge>} edges - List of edges in neighborhood
+ */
+
+/**
+ * @typedef {Object} PeerMetrics
+ * @property {number} rate - Request rate
+ * @property {number} p50 - 50th percentile latency
+ * @property {number} p95 - 95th percentile latency
+ * @property {number} p99 - 99th percentile latency
+ * @property {number} errorRate - Error rate
+ */
+
+/**
+ * @typedef {Object} Peer
+ * @property {string} service - Peer service name
+ * @property {number} podCount - Number of pods
+ * @property {number} availability - Availability score
+ * @property {PeerMetrics} metrics - Edge metrics
+ */
+
+/**
+ * @typedef {Object} PeersResponse
+ * @property {string} service - Service name
+ * @property {string} direction - Direction ('in' or 'out')
+ * @property {number} windowMinutes - Aggregation window in minutes
+ * @property {Array<Peer>} peers - List of peer services
+ */
+
+/**
+ * @typedef {Object} CentralityScore
+ * @property {string} service - Service name
+ * @property {number} value - Centrality score value
+ */
+
+/**
+ * @typedef {Object} CentralityTopResponse
+ * @property {string} metric - The centrality metric used (pagerank/betweenness)
+ * @property {Array<CentralityScore>} top - Top services by centrality
+ */
+
+/**
+ * @typedef {Object} ServiceScore
+ * @property {string} service - Service name
+ * @property {number} pagerank - PageRank centrality score
+ * @property {number} betweenness - Betweenness centrality score
+ */
+
+/**
+ * @typedef {Object} CentralityScoresResponse
+ * @property {number} windowMinutes - Aggregation window in minutes
+ * @property {Array<ServiceScore>} scores - List of service centrality scores
+ */
+
+/**
+ * @typedef {Object} ServiceMetrics
+ * @property {string} name - Service name
+ * @property {string} namespace - Kubernetes namespace
+ * @property {number} rps - Requests per second
+ * @property {number} errorRate - Error rate
+ * @property {number} p95 - 95th percentile latency
+ */
+
+/**
+ * @typedef {Object} EdgeSnapshot
+ * @property {string} from - Source service
+ * @property {string} to - Target service
+ * @property {string} namespace - Kubernetes namespace
+ * @property {number} rps - Requests per second
+ * @property {number} errorRate - Error rate
+ * @property {number} p95 - 95th percentile latency
+ */
+
+/**
+ * @typedef {Object} MetricsSnapshotResponse
+ * @property {string} timestamp - ISO timestamp
+ * @property {string} window - Time window (e.g., '1m')
+ * @property {Array<ServiceMetrics>} services - Service metrics
+ * @property {Array<EdgeSnapshot>} edges - Edge metrics
  */
 
 /**
@@ -142,12 +268,6 @@ async function getPeers(serviceName, direction) {
 }
 
 /**
- * @typedef {Object} CentralityTopResult
- * @property {string} metric - The centrality metric used
- * @property {Array<{service: string, value: number}>} top - Top services by centrality
- */
-
-/**
  * Get top services by centrality metric
  * @param {string} [metric='pagerank'] - Centrality metric (pagerank, betweenness)
  * @param {number} [limit=5] - Number of top services to return
@@ -167,6 +287,7 @@ async function getCentralityTop(metric = 'pagerank', limit = 5) {
 
 /**
  * List all services from the graph
+ * Returns {services: [{name, namespace, podCount, availability}, ...]}
  * @returns {Promise<ClientSuccess|ClientError>}
  */
 async function getServices() {
@@ -177,7 +298,7 @@ async function getServices() {
 
 /**
  * Get metrics snapshot (all services and edges in one call)
- * Returns {services: [...], edges: [...], timestamp, window}
+ * Returns {timestamp, window, services: [...], edges: [...]}
  * @returns {Promise<ClientSuccess|ClientError>}
  */
 async function getMetricsSnapshot() {
@@ -186,11 +307,23 @@ async function getMetricsSnapshot() {
     return httpGet(url, config.graphApi.timeoutMs);
 }
 
+/**
+ * Get centrality scores for all services (PageRank and Betweenness)
+ * Returns {windowMinutes, scores: [{service, pagerank, betweenness}, ...]}
+ * @returns {Promise<ClientSuccess|ClientError>}
+ */
+async function getCentralityScores() {
+    const baseUrl = normalizeBaseUrl(config.graphApi.baseUrl);
+    const url = `${baseUrl}/centrality/scores`;
+    return httpGet(url, config.graphApi.timeoutMs);
+}
+
 module.exports = {
     checkGraphHealth,
     getNeighborhood,
     getPeers,
     getCentralityTop,
+    getCentralityScores,
     getServices,
     getMetricsSnapshot,
     getBaseUrl,

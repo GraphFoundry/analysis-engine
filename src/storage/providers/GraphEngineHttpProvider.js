@@ -158,32 +158,34 @@ class GraphEngineHttpProvider {
             throw new Error(`Failed to fetch neighborhood: ${neighborhoodResult.error}`);
         }
 
-        const nodeNames = neighborhoodResult.data.nodes || [];
+        const nodeObjects = neighborhoodResult.data.nodes || [];
         
-        if (nodeNames.length === 0) {
+        if (nodeObjects.length === 0) {
             throw new Error(`Service not found: ${targetServiceId}`);
         }
 
-        const nodeSet = new Set(nodeNames);
+        const nodeSet = new Set(nodeObjects.map(n => n.name));
         const rawEdgesCount = (neighborhoodResult.data.edges || []).length;
 
         // Add fetch summary to trace
         if (trace && trace.setSummary) {
             trace.setSummary('fetch-neighborhood', {
                 depthUsed: maxDepth,
-                nodesReturned: nodeNames.length,
+                nodesReturned: nodeObjects.length,
                 edgesReturned: rawEdgesCount
             });
         }
 
-        // Build nodes Map
+        // Build nodes Map from node objects
         /** @type {Map<string, NodeData>} */
         const nodes = new Map();
-        for (const name of nodeNames) {
-            nodes.set(name, {
-                serviceId: name,
-                name: name,
-                namespace: 'default'  // Graph Engine doesn't provide namespace
+        for (const nodeObj of nodeObjects) {
+            nodes.set(nodeObj.name, {
+                serviceId: nodeObj.name,
+                name: nodeObj.name,
+                namespace: nodeObj.namespace || 'default',
+                podCount: nodeObj.podCount,
+                availability: nodeObj.availability
             });
         }
 
@@ -232,9 +234,9 @@ class GraphEngineHttpProvider {
         const outgoingEdges = new Map();
 
         // Initialize empty arrays for all nodes
-        for (const name of nodeNames) {
-            incomingEdges.set(name, []);
-            outgoingEdges.set(name, []);
+        for (const nodeObj of nodeObjects) {
+            incomingEdges.set(nodeObj.name, []);
+            outgoingEdges.set(nodeObj.name, []);
         }
 
         // Populate adjacency maps

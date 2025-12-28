@@ -322,7 +322,7 @@ async function getCentralityTop(metric = 'pagerank', limit = 5) {
 }
 
 /**
- * List all services from the graph
+ * List all services from the graph (basic info only)
  * Returns {services: [{name, namespace, podCount, availability}, ...]}
  * @returns {Promise<ClientSuccess|ClientError>}
  */
@@ -330,6 +330,19 @@ async function getServices() {
     const baseUrl = normalizeBaseUrl(config.graphApi.baseUrl);
     const url = `${baseUrl}/services`;
     return httpGet(url, config.graphApi.timeoutMs);
+}
+
+/**
+ * List all services with pod-level placement and resource metrics
+ * Returns {services: [{name, namespace, podCount, availability, placement: {nodes: [...]}}, ...]}
+ * Placement includes node-level CPU/RAM metrics and pod-level container metrics (ramUsedMB, cpuUsagePercent)
+ * Note: This calls the same endpoint as getServices() - the Graph Engine always returns placement data
+ * @returns {Promise<ClientSuccess|ClientError>}
+ */
+async function getServicesWithPlacement() {
+    // Graph Engine's /services endpoint always includes placement data when available
+    // This is a semantic wrapper for clarity in the codebase
+    return getServices();
 }
 
 /**
@@ -361,6 +374,7 @@ module.exports = {
     getCentralityTop,
     getCentralityScores,
     getServices,
+    getServicesWithPlacement,
     getMetricsSnapshot,
     getBaseUrl,
     isEnabled,

@@ -2,7 +2,7 @@ const express = require('express');
 const config = require('./src/config/config');
 const { validateEnv } = require('./src/config/config');
 const { getProvider } = require('./src/storage/providers');
-const { checkGraphHealth, getServices, getMetricsSnapshot } = require('./src/clients/graphEngineClient');
+const { checkGraphHealth, getServices, getServicesWithPlacement, getMetricsSnapshot } = require('./src/clients/graphEngineClient');
 const { simulateFailure } = require('./src/simulation/failureSimulation');
 const { simulateScaling } = require('./src/simulation/scalingSimulation');
 const { getTopRiskServices } = require('./src/simulation/riskAnalysis');
@@ -110,15 +110,15 @@ app.get('/health', async (req, res) => {
 
 /**
  * GET /services
- * List all discovered services from the graph
+ * List all discovered services from the graph with pod-level placement metrics
  * Returns normalized serviceId (namespace:name) for UI consumption
+ * Includes pod-level container metrics (ramUsedMB, cpuUsagePercent) and node-level resources
  */
 app.get('/services', async (req, res) => {
     try {
-        // Fetch snapshot (services + edges) and health in parallel
-        // We use getMetricsSnapshot because it returns the edges, unlike getServices
-        const [snapshotResult, healthResult] = await Promise.all([
-            getMetricsSnapshot(),
+        // Fetch services with placement and health in parallel
+        const [servicesResult, healthResult] = await Promise.all([
+            getServicesWithPlacement(),
             checkGraphHealth()
         ]);
 
@@ -133,72 +133,36 @@ app.get('/services', async (req, res) => {
             windowMinutes = healthResult.data.windowMinutes ?? 5;
         }
 
-        // Handle snapshot fetch failure
-        if (!snapshotResult.ok) {
-            // Fallback: try basic getServices if snapshot fails (e.g. no metrics yet)
-            console.warn('Snapshot failed, falling back to basic services list:', snapshotResult.error);
-            const servicesResult = await getServices();
-
-            if (!servicesResult.ok) {
-                return res.status(503).json({
-                    error: servicesResult.error || 'Failed to fetch services from Graph Engine',
-                    services: [],
-                    count: 0,
-                    stale: true,
-                    lastUpdatedSecondsAgo: null,
-                    windowMinutes
-                });
-            }
-
-            const rawServices = servicesResult.data?.services || [];
-            const services = rawServices.map(svc => ({
-                serviceId: `${svc.namespace || 'default'}:${svc.name}`,
-                name: svc.name,
-                namespace: svc.namespace || 'default',
-                ...(svc.podCount !== undefined && { podCount: svc.podCount }),
-                ...(svc.availability !== undefined && { availability: svc.availability })
-            }));
-
-            return res.json({
-                services,
-                count: services.length,
-                stale,
-                lastUpdatedSecondsAgo,
+        // Handle services fetch failure
+        if (!servicesResult.ok) {
+            return res.status(503).json({
+                error: servicesResult.error || 'Failed to fetch services from Graph Engine',
+                services: [],
+                count: 0,
+                stale: true,
+                lastUpdatedSecondsAgo: null,
                 windowMinutes
             });
         }
 
-        // Process Snapshot Data
-        const rawServices = snapshotResult.data?.services || [];
-        const rawEdges = snapshotResult.data?.edges || [];
+        // Process Services with Placement Data
+        const rawServices = servicesResult.data?.services || [];
 
         const services = rawServices.map(svc => ({
             serviceId: `${svc.namespace || 'default'}:${svc.name}`,
             name: svc.name,
             namespace: svc.namespace || 'default',
             ...(svc.podCount !== undefined && { podCount: svc.podCount }),
-            ...(svc.availability !== undefined && { availability: svc.availability })
+            ...(svc.availability !== undefined && { availability: svc.availability }),
+            ...(svc.placement && { placement: svc.placement })
         }));
-
-        const serviceMap = new Map();
-        services.forEach(s => serviceMap.set(s.name, s.namespace));
-
-        const edges = rawEdges.map(e => {
-            const fromNs = serviceMap.get(e.from) || 'default';
-            const toNs = e.namespace || 'default';
-            return {
-                source: `${fromNs}:${e.from}`,
-                target: `${toNs}:${e.to}`
-            };
-        });
 
         res.json({
             services,
             count: services.length,
             stale,
             lastUpdatedSecondsAgo,
-            windowMinutes,
-            edges
+            windowMinutes
         });
 
     } catch (error) {

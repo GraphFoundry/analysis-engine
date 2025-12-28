@@ -3,6 +3,12 @@
  * 
  * Uses native http/https modules to avoid external dependencies.
  * Returns { ok: true, data } on success or { ok: false, error, status? } on failure.
+ * 
+ * CONTAINER-LEVEL METRICS:
+ * As of the latest update, the /services endpoint now includes pod-level container metrics:
+ * - ramUsedMB: Pod RAM usage in MB (aggregated from all containers)
+ * - cpuUsagePercent: Pod CPU usage as percentage of node's total cores
+ * These metrics are available in the placement.nodes[].pods[] array.
  */
 
 const http = require('node:http');
@@ -18,11 +24,41 @@ const config = require('../config/config');
  */
 
 /**
+ * @typedef {Object} PodInfo
+ * @property {string} name - Pod name
+ * @property {number} ramUsedMB - Pod RAM usage in MB
+ * @property {number} cpuUsagePercent - Pod CPU usage as percentage of node's total cores
+ */
+
+/**
+ * @typedef {Object} NodeResources
+ * @property {Object} cpu - CPU metrics
+ * @property {number} cpu.usagePercent - Node CPU usage percentage
+ * @property {number} cpu.cores - Total CPU cores on node
+ * @property {Object} ram - RAM metrics
+ * @property {number} ram.usedMB - RAM used on node in MB
+ * @property {number} ram.totalMB - Total RAM on node in MB
+ */
+
+/**
+ * @typedef {Object} NodePlacement
+ * @property {string} node - Node name
+ * @property {NodeResources} resources - Node resource usage
+ * @property {Array<PodInfo>} pods - Pods running on this node
+ */
+
+/**
+ * @typedef {Object} ServicePlacement
+ * @property {Array<NodePlacement>} nodes - Nodes hosting this service's pods
+ */
+
+/**
  * @typedef {Object} ServiceInfo
  * @property {string} name - Service name
  * @property {string} namespace - Kubernetes namespace
  * @property {number} podCount - Number of pods running
  * @property {number} availability - Availability score (0-1)
+ * @property {ServicePlacement} placement - Pod placement with container-level metrics
  */
 
 /**

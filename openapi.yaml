@@ -95,6 +95,14 @@ paths:
         Returns all services discovered in the current graph snapshot.
         Each service includes a normalized serviceId (namespace:name) for UI consumption.
         Includes freshness metadata from the graph engine.
+        
+        **Container-Level Metrics:**
+        Each service includes placement information showing which Kubernetes nodes host its pods,
+        along with pod-level resource metrics:
+        - ramUsedMB: Pod RAM usage in MB (aggregated from all containers)
+        - cpuUsagePercent: Pod CPU usage as percentage of node's total cores
+        
+        Node-level resource metrics (CPU and RAM) are also included for context.
       operationId: listServices
       responses:
         '200':
@@ -108,9 +116,41 @@ paths:
                   - serviceId: "default:frontend"
                     name: "frontend"
                     namespace: "default"
+                    podCount: 1
+                    availability: 1
+                    placement:
+                      nodes:
+                        - node: "minikube"
+                          resources:
+                            cpu:
+                              usagePercent: 7.96
+                              cores: 8
+                            ram:
+                              usedMB: 8107.19
+                              totalMB: 24026.4
+                          pods:
+                            - name: "frontend-75d897db69-dmtzh"
+                              ramUsedMB: 59.65
+                              cpuUsagePercent: 0.27
                   - serviceId: "default:checkoutservice"
                     name: "checkoutservice"
                     namespace: "default"
+                    podCount: 1
+                    availability: 1
+                    placement:
+                      nodes:
+                        - node: "minikube"
+                          resources:
+                            cpu:
+                              usagePercent: 7.96
+                              cores: 8
+                            ram:
+                              usedMB: 8107.19
+                              totalMB: 24026.4
+                          pods:
+                            - name: "checkoutservice-57dd9cf79b-28dx6"
+                              ramUsedMB: 52.06
+                              cpuUsagePercent: 0.03
                 count: 2
                 stale: false
                 lastUpdatedSecondsAgo: 45
@@ -945,7 +985,7 @@ components:
 
     DiscoveredService:
       type: object
-      description: A service discovered in the graph
+      description: A service discovered in the graph with pod placement and container-level metrics
       required:
         - serviceId
         - name
@@ -963,6 +1003,72 @@ components:
           type: string
           description: Kubernetes namespace
           example: "default"
+        podCount:
+          type: integer
+          description: Total number of pods running for this service
+          example: 3
+        availability:
+          type: number
+          description: Service availability score (0-1)
+          example: 1
+        placement:
+          type: object
+          description: Pod placement information across Kubernetes nodes with container-level resource metrics
+          properties:
+            nodes:
+              type: array
+              description: List of nodes hosting this service's pods
+              items:
+                type: object
+                properties:
+                  node:
+                    type: string
+                    description: Kubernetes node name
+                    example: "minikube"
+                  resources:
+                    type: object
+                    description: Node-level resource usage
+                    properties:
+                      cpu:
+                        type: object
+                        properties:
+                          usagePercent:
+                            type: number
+                            description: Node CPU usage percentage
+                            example: 7.96
+                          cores:
+                            type: integer
+                            description: Total CPU cores available on node
+                            example: 8
+                      ram:
+                        type: object
+                        properties:
+                          usedMB:
+                            type: number
+                            description: RAM used on node in MB
+                            example: 8107.19
+                          totalMB:
+                            type: number
+                            description: Total RAM available on node in MB
+                            example: 24026.4
+                  pods:
+                    type: array
+                    description: Pods running on this node with container-level metrics
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          description: Pod name
+                          example: "frontend-75d897db69-dmtzh"
+                        ramUsedMB:
+                          type: number
+                          description: Pod RAM usage in MB (aggregated from all containers)
+                          example: 59.65
+                        cpuUsagePercent:
+                          type: number
+                          description: Pod CPU usage as percentage of node's total cores
+                          example: 0.27
 
     ServiceIdentifier:
       type: object

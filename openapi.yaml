@@ -318,6 +318,64 @@ paths:
               example:
                 error: "Internal server error"
 
+  /simulate/add:
+    post:
+      tags:
+        - Simulation
+      summary: Simulate adding a new service
+      description: |
+        Analyze cluster capacity to determine if a new service with specified resource requirements
+        can be added. Returns placement recommendations based on available node resources.
+      operationId: simulateAdd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddSimulationRequest'
+            example:
+              serviceName: new-service
+              cpuRequest: 0.5
+              ramRequest: 512
+              replicas: 3
+      responses:
+        '200':
+          description: Placement analysis result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddSimulationResponse'
+              example:
+                success: true
+                confidence: high
+                explanation: "Successfully placed 3 replica(s) across 2 node(s)."
+                totalCapacityPods: 10
+                nodeAnalysis:
+                  - node: minikube
+                    cpuAvailable: 2.5
+                    ramAvailableMB: 4096.0
+                    canFit: true
+                    maxPods: 5
+                recommendation:
+                  serviceName: new-service
+                  cpuRequest: 0.5
+                  ramRequest: 512
+                  distribution:
+                    - node: minikube
+                      replicas: 3
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /simulate/scale:
     post:
       tags:
@@ -1254,8 +1312,116 @@ components:
           description: Optional pipeline trace (included only when trace=true query param is set)
         correlationId:
           type: string
-          format: uuid
           description: Request correlation ID (included only when trace=true)
+
+    AddSimulationRequest:
+      type: object
+      required:
+        - serviceName
+      properties:
+        serviceName:
+          type: string
+          description: Name of the service to add
+        cpuRequest:
+          type: number
+          default: 0.1
+          description: CPU cores requested per pod
+        ramRequest:
+          type: number
+          default: 128
+          description: RAM in MB requested per pod
+        replicas:
+          type: integer
+          default: 1
+          description: Number of replicas to deploy
+        dependencies:
+          type: array
+          description: List of dependencies for the new service
+          items:
+            $ref: '#/components/schemas/ServiceDependency'
+
+    ServiceDependency:
+      type: object
+      required:
+        - serviceId
+      properties:
+        serviceId:
+          type: string
+        relation:
+          type: string
+          enum: [calls, called_by]
+          default: calls
+
+    AddSimulationResponse:
+      type: object
+      properties:
+        targetServiceName:
+          type: string
+        success:
+          type: boolean
+          description: Whether the placement is possible for all replicas
+        confidence:
+          type: string
+          enum: [high, low, unknown]
+        explanation:
+          type: string
+          description: Human readable explanation of the result
+        totalCapacityPods:
+          type: integer
+          description: Total number of such pods the cluster can fit
+        suitableNodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeSuitability'
+        riskAnalysis:
+          type: object
+          properties:
+            dependencyRisk:
+              type: string
+              enum: [low, medium, high]
+            description:
+              type: string
+        recommendations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Recommendation'
+
+    NodeSuitability:
+      type: object
+      properties:
+        nodeName:
+          type: string
+        suitable:
+          type: boolean
+        reason:
+          type: string
+        availableCpu:
+          type: number
+        availableRam:
+          type: number
+        score:
+          type: integer
+          description: Suitability score (0-100)
+
+    AddRecommendation:
+      type: object
+      properties:
+        serviceName:
+          type: string
+        cpuRequest:
+          type: number
+        ramRequest:
+          type: number
+        distribution:
+          type: array
+          description: Recommended pod distribution
+          items:
+            type: object
+            properties:
+              node:
+                type: string
+              replicas:
+                type: integer
 
     RiskAnalysisResponse:
       type: object

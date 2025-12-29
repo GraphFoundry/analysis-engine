@@ -10,7 +10,7 @@ class InfluxWriter {
   constructor() {
     this.client = null;
     this.database = config.influx.database;
-    
+
     if (config.influx.host && config.influx.token && config.influx.database) {
       try {
         this.client = new InfluxDBClient({
@@ -46,7 +46,7 @@ class InfluxWriter {
     try {
       const lines = services.map(svc => {
         const tags = `service=${this.escapeTag(svc.name)},namespace=${this.escapeTag(svc.namespace || 'default')}`;
-        
+
         // Build fields array, filtering out null values
         const fieldPairs = [
           { key: 'request_rate', value: this.formatNumber(svc.requestRate) },
@@ -56,10 +56,10 @@ class InfluxWriter {
           { key: 'p99', value: this.formatNumber(svc.p99) },
           { key: 'availability', value: this.formatNumber(svc.availability) }
         ].filter(f => f.value !== null);
-        
+
         // Skip if no valid fields
         if (fieldPairs.length === 0) return null;
-        
+
         const fields = fieldPairs.map(f => `${f.key}=${f.value}`).join(',');
         return `service_metrics,${tags} ${fields}`;
       }).filter(line => line !== null);
@@ -93,7 +93,7 @@ class InfluxWriter {
     try {
       const lines = edges.map(edge => {
         const tags = `from=${this.escapeTag(edge.from)},to=${this.escapeTag(edge.to)},namespace=${this.escapeTag(edge.namespace || 'default')}`;
-        
+
         // Build fields array, filtering out null values
         const fieldPairs = [
           { key: 'request_rate', value: this.formatNumber(edge.requestRate) },
@@ -102,10 +102,10 @@ class InfluxWriter {
           { key: 'p95', value: this.formatNumber(edge.p95) },
           { key: 'p99', value: this.formatNumber(edge.p99) }
         ].filter(f => f.value !== null);
-        
+
         // Skip if no valid fields
         if (fieldPairs.length === 0) return null;
-        
+
         const fields = fieldPairs.map(f => `${f.key}=${f.value}`).join(',');
         return `edge_metrics,${tags} ${fields}`;
       }).filter(line => line !== null);
@@ -140,6 +140,90 @@ class InfluxWriter {
       return null;
     }
     return String(value);
+  }
+
+  /**
+   * Write infrastructure metrics (nodes and pods) to InfluxDB
+   * @param {Object} data - { nodes: [], services: [] }
+   */
+  async writeInfrastructureMetrics(data) {
+    if (!this.client) {
+      // console.warn('[InfluxDB] Client not configured, skipping infra metrics write');
+      return;
+    }
+
+    if (!data || !data.nodes || data.nodes.length === 0) {
+      return;
+    }
+
+    try {
+      const dbLines = [];
+
+      // 1. Process Node Metrics
+      data.nodes.forEach(node => {
+        const nodeName = node.node || node.name; // Handle potential schema variations
+        if (!nodeName) return;
+
+        const tags = `node=${this.escapeTag(nodeName)}`;
+
+        const resources = node.resources || {};
+        const cpu = resources.cpu || {};
+        const ram = resources.ram || {};
+
+        // Flat structure for fallback if resources object is different
+        // In pollWorker we might map it differently, but let's support the structure from Graph Engine
+        const cpuUsage = cpu.usagePercent ?? node.cpuUsagePercent;
+        const cpuCores = cpu.cores ?? node.cores;
+        const ramUsed = ram.usedMB ?? node.ramUsedMB;
+        const ramTotal = ram.totalMB ?? node.ramTotalMB;
+
+        const fieldPairs = [
+          { key: 'cpu_usage_percent', value: this.formatNumber(cpuUsage) },
+          { key: 'cpu_total_cores', value: this.formatNumber(cpuCores) },
+          { key: 'ram_used_mb', value: this.formatNumber(ramUsed) },
+          { key: 'ram_total_mb', value: this.formatNumber(ramTotal) },
+          { key: 'pod_count', value: this.formatNumber(node.pods ? node.pods.length : 0) }
+        ].filter(f => f.value !== null);
+
+        if (fieldPairs.length > 0) {
+          const fields = fieldPairs.map(f => `${f.key}=${f.value}`).join(',');
+          dbLines.push(`node_metrics,${tags} ${fields}`);
+        }
+
+        // 2. Process Pod Metrics (embedded in nodes)
+        if (node.pods && Array.isArray(node.pods)) {
+          node.pods.forEach(pod => {
+            if (!pod.name) return;
+
+            // Extract namespace from pod name or other context if available
+            // Graph Engine structure might just have name. We'll try to guess or use default.
+            // Ideally should be passed down. For now, rely on pod name.
+            const podTags = `pod=${this.escapeTag(pod.name)},node=${this.escapeTag(nodeName)}`;
+
+            const podFields = [
+              { key: 'ram_used_mb', value: this.formatNumber(pod.ramUsedMB) },
+              { key: 'cpu_usage_percent', value: this.formatNumber(pod.cpuUsagePercent) },
+              { key: 'cpu_usage_cores', value: this.formatNumber(pod.cpuUsageCores) }
+            ].filter(f => f.value !== null);
+
+            if (podFields.length > 0) {
+              const fields = podFields.map(f => `${f.key}=${f.value}`).join(',');
+              dbLines.push(`pod_metrics,${podTags} ${fields}`);
+            }
+          });
+        }
+      });
+
+      if (dbLines.length === 0) {
+        return;
+      }
+
+      await this.client.write(dbLines.join('\n'), this.database);
+      console.log(`[InfluxDB] Wrote ${dbLines.length} infrastructure metric points`);
+
+    } catch (error) {
+      console.error(`[InfluxDB] Error writing infra metrics: ${error.message}`);
+    }
   }
 
   /**

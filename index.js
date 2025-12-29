@@ -5,6 +5,7 @@ const { getProvider } = require('./src/storage/providers');
 const { checkGraphHealth, getServices, getServicesWithPlacement, getMetricsSnapshot } = require('./src/clients/graphEngineClient');
 const { simulateFailure } = require('./src/simulation/failureSimulation');
 const { simulateScaling } = require('./src/simulation/scalingSimulation');
+const { simulateAdd } = require('./src/simulation/addSimulation');
 const { getTopRiskServices } = require('./src/simulation/riskAnalysis');
 const { correlationMiddleware } = require('./src/middleware/correlation');
 const { rateLimitMiddleware } = require('./src/middleware/rateLimit');
@@ -413,6 +414,55 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
             console.error('Simulation error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
+    }
+});
+
+/**
+ * POST /simulate/add
+ * Simulate adding a new service (resource fit analysis)
+ * 
+ * Request body:
+ * - serviceName: string
+ * - cpuRequest: number (cores, default 0.1)
+ * - ramRequest: number (MB, default 128)
+ * - replicas: number (default 1)
+ */
+app.post('/simulate/add', simulationRateLimiter, async (req, res) => {
+    try {
+        const result = await simulateAdd(req.body);
+
+        // Auto-log decision to SQLite (best-effort)
+        const decisionStore = getDecisionStore();
+        if (decisionStore) {
+            try {
+                const inserted = decisionStore.logDecision({
+                    timestamp: new Date().toISOString(),
+                    type: 'add',
+                    scenario: {
+                        serviceName: req.body.serviceName,
+                        cpuRequest: req.body.cpuRequest,
+                        ramRequest: req.body.ramRequest,
+                        replicas: req.body.replicas
+                    },
+                    result: {
+                        recommendation: result.recommendation,
+                        success: result.success,
+                        confidence: result.confidence
+                    },
+                    correlationId: req.correlationId
+                });
+                if (process.env.DEBUG_DECISIONS === 'true') {
+                    console.log(`[DecisionStore Debug] Auto-logged add: id=${inserted.id}`);
+                }
+            } catch (error_) {
+                console.error('[DecisionStore] Auto-log failed:', error_.message);
+            }
+        }
+
+        res.json(result);
+    } catch (error) {
+        console.error('Simulation error:', error.message);
+        res.status(500).json({ error: error.message });
     }
 });
 

@@ -1,5 +1,6 @@
 const { getServicesWithPlacement } = require('../clients/graphEngineClient');
 const config = require('../config/config');
+const telemetryService = require('../services/telemetryService');
 
 /**
  * @typedef {Object} AddSimulationRequest
@@ -7,6 +8,7 @@ const config = require('../config/config');
  * @property {number} cpuRequest - CPU cores requested per pod
  * @property {number} ramRequest - RAM MB requested per pod
  * @property {number} replicas - Number of replicas
+ * @property {string} [timeWindow] - Historical time window (e.g. '1w')
  */
 
 /**
@@ -39,7 +41,7 @@ const config = require('../config/config');
  * @returns {Promise<AddSimulationResult>}
  */
 async function simulateAdd(request) {
-    const { serviceName, cpuRequest = 0.1, ramRequest = 128, replicas = 1, dependencies = [] } = request;
+    const { serviceName, cpuRequest = 0.1, ramRequest = 128, replicas = 1, dependencies = [], timeWindow } = request;
 
     // Validate inputs
     if (cpuRequest <= 0 || ramRequest <= 0 || replicas <= 0) {
@@ -82,6 +84,26 @@ async function simulateAdd(request) {
             });
         }
     });
+
+    // OVERRIDE with historical metrics if requested
+    if (timeWindow) {
+        try {
+            const { from, to } = telemetryService.parseTimeWindow(timeWindow);
+            const aggregatedNodes = await telemetryService.getAggregatedNodeMetrics(from, to);
+
+            // Loop through our known nodes and update their usage with historical averages
+            for (const [nodeName, nodeData] of nodeMap) {
+                const history = aggregatedNodes.get(nodeName);
+                if (history) {
+                    nodeData.cpuUsagePercent = history.cpuUsagePercent;
+                    nodeData.ramUsedMB = history.ramUsageMB;
+                    nodeData.isHistorical = true;
+                }
+            }
+        } catch (err) {
+            console.error('Failed to overlay historical node metrics:', err);
+        }
+    }
 
     const nodes = Array.from(nodeMap.values());
 

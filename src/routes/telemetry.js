@@ -6,22 +6,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { InfluxDBClient } = require('@influxdata/influxdb3-client');
-const config = require('../config/config');
-
-// Initialize InfluxDB client (singleton)
-let influxClient;
-if (config.influx.host && config.influx.token && config.influx.database) {
-  try {
-    influxClient = new InfluxDBClient({
-      host: config.influx.host,
-      token: config.influx.token,
-      database: config.influx.database
-    });
-  } catch (error) {
-    console.error(`Failed to initialize InfluxDB client: ${error.message}`);
-  }
-}
+const telemetryService = require('../services/telemetryService');
 
 /**
  * Validate timestamp (ISO 8601)
@@ -47,88 +32,28 @@ function validateTimeRange(from, to) {
 /**
  * GET /telemetry/service
  * Get time-series metrics for a service
- * 
- * Query params:
- * - service: Service name (required)
- * - from: Start timestamp ISO 8601 (required)
- * - to: End timestamp ISO 8601 (required)
- * - step: Time bucket size in seconds (optional, default: 60)
  */
 router.get('/service', async (req, res) => {
-  if (!config.telemetry.enabled) {
-    return res.status(503).json({ 
-      error: 'Telemetry endpoints disabled. Set TELEMETRY_ENABLED=true to enable.' 
-    });
-  }
-
-  if (!influxClient) {
-    return res.status(503).json({ 
-      error: 'InfluxDB not configured. Set INFLUX_HOST, INFLUX_TOKEN, INFLUX_DATABASE' 
-    });
+  const status = telemetryService.checkStatus();
+  if (!status.enabled) {
+    return res.status(503).json({ error: status.error });
   }
 
   try {
     const { service, from, to, step } = req.query;
 
-    // Validate required params
     if (!from || !to) {
-      return res.status(400).json({ 
-        error: 'Missing required parameters: from, to' 
-      });
+      return res.status(400).json({ error: 'Missing required parameters: from, to' });
     }
 
     if (!validateTimestamp(from) || !validateTimestamp(to)) {
-      return res.status(400).json({ 
-        error: 'Invalid timestamp format. Use ISO 8601 (e.g., 2026-01-04T10:00:00Z)' 
-      });
+      return res.status(400).json({ error: 'Invalid timestamp format' });
     }
 
     validateTimeRange(from, to);
 
     const stepSeconds = Number.parseInt(step) || 60;
-
-    // SQL query for InfluxDB 3 (using DATE_BIN for time bucketing)
-    const serviceFilter = service ? `service = '${service.replaceAll("'", "''")}'` : '1=1';
-    const query = `
-      SELECT 
-        DATE_BIN(INTERVAL '${stepSeconds} seconds', time, '1970-01-01T00:00:00Z'::TIMESTAMP) AS bucket,
-        service,
-        namespace,
-        AVG(request_rate) AS avg_request_rate,
-        AVG(NULLIF(error_rate, 0)) AS avg_error_rate,
-        AVG(NULLIF(p50, 0)) AS avg_p50,
-        AVG(NULLIF(p95, 0)) AS avg_p95,
-        AVG(NULLIF(p99, 0)) AS avg_p99,
-        AVG(NULLIF(availability, 0)) AS avg_availability
-      FROM service_metrics
-      WHERE ${serviceFilter}
-        AND time >= '${from}'
-        AND time < '${to}'
-      GROUP BY bucket, service, namespace
-      ORDER BY bucket ASC
-    `;
-
-    const results = [];
-    const reader = await influxClient.query(query, config.influx.database);
-
-    for await (const row of reader) {
-      results.push({
-        timestamp: row.bucket,
-        service: row.service,
-        namespace: row.namespace,
-        requestRate: row.avg_request_rate,
-        errorRate: row.avg_error_rate,
-        p50: row.avg_p50,
-        p95: row.avg_p95,
-        p99: row.avg_p99,
-        availability: row.avg_availability
-      });
-    }
-
-    // Debug logging (guarded by env var)
-    if (process.env.DEBUG_TELEMETRY === 'true' && results.length > 0) {
-      console.log('[Telemetry Debug] First 2 datapoints:', JSON.stringify(results.slice(0, 2), null, 2));
-    }
+    const results = await telemetryService.getServiceMetrics(service, from, to, stepSeconds);
 
     res.json({
       service: service || 'all',
@@ -140,11 +65,9 @@ router.get('/service', async (req, res) => {
 
   } catch (error) {
     console.error('Error querying InfluxDB:', error);
-    
     if (error.message.includes('Time range exceeds')) {
       return res.status(400).json({ error: error.message });
     }
-    
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -152,95 +75,28 @@ router.get('/service', async (req, res) => {
 /**
  * GET /telemetry/edges
  * Get time-series metrics for edges between services
- * 
- * Query params:
- * - fromService: Source service name (optional)
- * - toService: Destination service name (optional)
- * - from: Start timestamp ISO 8601 (required)
- * - to: End timestamp ISO 8601 (required)
- * - step: Time bucket size in seconds (optional, default: 60)
  */
 router.get('/edges', async (req, res) => {
-  if (!config.telemetry.enabled) {
-    return res.status(503).json({ 
-      error: 'Telemetry endpoints disabled. Set TELEMETRY_ENABLED=true to enable.' 
-    });
-  }
-
-  if (!influxClient) {
-    return res.status(503).json({ 
-      error: 'InfluxDB not configured. Set INFLUX_HOST, INFLUX_TOKEN, INFLUX_DATABASE' 
-    });
+  const status = telemetryService.checkStatus();
+  if (!status.enabled) {
+    return res.status(503).json({ error: status.error });
   }
 
   try {
     const { fromService, toService, from, to, step } = req.query;
 
-    // Validate required params
     if (!from || !to) {
-      return res.status(400).json({ 
-        error: 'Missing required parameters: from, to' 
-      });
+      return res.status(400).json({ error: 'Missing required parameters: from, to' });
     }
 
     if (!validateTimestamp(from) || !validateTimestamp(to)) {
-      return res.status(400).json({ 
-        error: 'Invalid timestamp format. Use ISO 8601 (e.g., 2026-01-04T10:00:00Z)' 
-      });
+      return res.status(400).json({ error: 'Invalid timestamp format' });
     }
 
     validateTimeRange(from, to);
 
     const stepSeconds = Number.parseInt(step) || 60;
-
-    // Build WHERE clause
-    const conditions = [
-      `time >= '${from}'`,
-      `time < '${to}'`
-    ];
-
-    if (fromService) {
-      conditions.push(`"from" = '${fromService.replaceAll("'", "''")}'`);
-    }
-
-    if (toService) {
-      conditions.push(`"to" = '${toService.replaceAll("'", "''")}'`);
-    }
-
-    // SQL query for InfluxDB 3 (using DATE_BIN for time bucketing)
-    const query = `
-      SELECT 
-        DATE_BIN(INTERVAL '${stepSeconds} seconds', time, '1970-01-01T00:00:00Z'::TIMESTAMP) AS bucket,
-        "from" AS from_service,
-        "to" AS to_service,
-        namespace,
-        AVG(request_rate) AS avg_request_rate,
-        AVG(NULLIF(error_rate, 0)) AS avg_error_rate,
-        AVG(NULLIF(p50, 0)) AS avg_p50,
-        AVG(NULLIF(p95, 0)) AS avg_p95,
-        AVG(NULLIF(p99, 0)) AS avg_p99
-      FROM edge_metrics
-      WHERE ${conditions.join(' AND ')}
-      GROUP BY bucket, from_service, to_service, namespace
-      ORDER BY bucket ASC
-    `;
-
-    const results = [];
-    const reader = await influxClient.query(query, config.influx.database);
-
-    for await (const row of reader) {
-      results.push({
-        timestamp: row.bucket,
-        from: row.from_service,
-        to: row.to_service,
-        namespace: row.namespace,
-        requestRate: row.avg_request_rate,
-        errorRate: row.avg_error_rate,
-        p50: row.avg_p50,
-        p95: row.avg_p95,
-        p99: row.avg_p99
-      });
-    }
+    const results = await telemetryService.getEdgeMetrics(fromService, toService, from, to, stepSeconds);
 
     res.json({
       fromService,
@@ -253,11 +109,9 @@ router.get('/edges', async (req, res) => {
 
   } catch (error) {
     console.error('Error querying InfluxDB:', error);
-    
     if (error.message.includes('Time range exceeds')) {
       return res.status(400).json({ error: error.message });
     }
-    
     res.status(500).json({ error: 'Internal server error' });
   }
 });

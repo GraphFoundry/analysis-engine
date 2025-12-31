@@ -136,7 +136,7 @@ class TelemetryService {
             SELECT 
                 node,
                 AVG(cpu_usage_percent) AS avg_cpu,
-                AVG(ram_usage_mb) AS avg_ram
+                AVG(ram_used_mb) AS avg_ram
             FROM node_metrics
             WHERE time >= '${fromTime}'
               AND time < '${toTime}'

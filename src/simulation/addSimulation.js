@@ -230,7 +230,10 @@ async function simulateAdd(request) {
     if (dependencies && dependencies.length > 0) {
         dependencies.forEach(dep => {
             const depServiceId = dep.serviceId;
-            const exists = services.some(s => s.serviceId === depServiceId);
+            const exists = services.some(s => {
+                const sId = s.serviceId || `${s.namespace}:${s.name}`;
+                return sId === depServiceId;
+            });
             if (!exists) {
                 missingDeps.push(depServiceId);
             }

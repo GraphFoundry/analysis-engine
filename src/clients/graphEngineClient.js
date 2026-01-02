@@ -28,6 +28,7 @@ const config = require('../config/config');
  * @property {string} name - Pod name
  * @property {number} ramUsedMB - Pod RAM usage in MB
  * @property {number} cpuUsagePercent - Pod CPU usage as percentage of node's total cores
+ * @property {number} uptimeSeconds - Pod uptime in seconds
  */
 
 /**
@@ -217,10 +218,10 @@ function httpGet(url, timeoutMs) {
                         parsed = JSON.parse(data);
                     } catch (parseError) {
                         // JSON parse failed - include parse error message
-                        resolve({ 
-                            ok: false, 
-                            error: `Invalid JSON response: ${parseError.message}`, 
-                            status: res.statusCode 
+                        resolve({
+                            ok: false,
+                            error: `Invalid JSON response: ${parseError.message}`,
+                            status: res.statusCode
                         });
                         return;
                     }

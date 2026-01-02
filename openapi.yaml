@@ -147,6 +147,7 @@ paths:
                             - name: "checkoutservice-57dd9cf79b-28dx6"
                               ramUsedMB: 52.06
                               cpuUsagePercent: 0.03
+                              uptimeSeconds: 12450
                 count: 2
                 stale: false
                 lastUpdatedSecondsAgo: 45
@@ -1149,6 +1150,9 @@ components:
                           type: number
                           description: Pod CPU usage as percentage of node's total cores
                           example: 0.27
+                        uptimeSeconds:
+                          type: number
+                          description: Pod uptime in seconds
 
     ServiceIdentifier:
       type: object

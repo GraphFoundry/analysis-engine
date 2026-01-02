@@ -9,7 +9,7 @@ info:
     - Graph Engine API (service-graph-engine) - single source of truth for topology and metrics
     
     **Note:** Swagger UI is disabled by default. Set `ENABLE_SWAGGER=true` to enable.
-  version: 1.3.0
+  version: 1.4.1
   contact:
     name: Team Alpha Zero
   license:
@@ -57,15 +57,9 @@ paths:
                 $ref: '#/components/schemas/HealthResponse'
               example:
                 status: ok
-                dataSource: graph-api
-                provider:
-                  connected: true
-                  services: 12
-                  stale: false
-                  error: null
+                provider: graph-engine
                 graphApi:
-                  enabled: true
-                  available: true
+                  connected: true
                   status: ok
                   stale: false
                   lastUpdatedSecondsAgo: 45
@@ -74,7 +68,9 @@ paths:
                 config:
                   maxTraversalDepth: 2
                   defaultLatencyMetric: p95
-                  graphApiEnabled: true
+                telemetry:
+                  enabled: true
+                  workerEnabled: true
                 uptimeSeconds: 123.4
         '500':
           description: Internal server error
@@ -326,6 +322,14 @@ paths:
       description: |
         Analyze cluster capacity to determine if a new service with specified resource requirements
         can be added. Returns placement recommendations based on available node resources.
+        
+        **Time-Based Analysis:**
+        - By default, uses current node capacity snapshot
+        - Optional `timeWindow` parameter enables historical averaging (e.g., '1w' for past week)
+        - Historical mode reduces impact of temporary spikes in resource usage
+        
+        **Dependency Risk Analysis:**
+        - Optional `dependencies` array enables risk scoring based on missing/existing dependencies
       operationId: simulateAdd
       requestBody:
         required: true
@@ -333,11 +337,34 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/AddSimulationRequest'
-            example:
-              serviceName: new-service
-              cpuRequest: 0.5
-              ramRequest: 512
-              replicas: 3
+            examples:
+              basic:
+                summary: Basic capacity check
+                value:
+                  serviceName: new-service
+                  cpuRequest: 0.5
+                  ramRequest: 512
+                  replicas: 3
+              withTimeWindow:
+                summary: With historical time window
+                value:
+                  serviceName: new-service
+                  cpuRequest: 0.5
+                  ramRequest: 512
+                  replicas: 3
+                  timeWindow: "1w"
+              withDependencies:
+                summary: With dependency risk analysis
+                value:
+                  serviceName: new-service
+                  cpuRequest: 0.5
+                  ramRequest: 512
+                  replicas: 3
+                  dependencies:
+                    - serviceId: "default:cartservice"
+                      relation: calls
+                    - serviceId: "default:redis"
+                      relation: calls
       responses:
         '200':
           description: Placement analysis result
@@ -964,27 +991,14 @@ components:
         status:
           type: string
           enum: [ok, degraded, error]
-        dataSource:
+        provider:
           type: string
           enum: [graph-engine]
-        provider:
-          type: object
-          properties:
-            connected:
-              type: boolean
-            services:
-              type: integer
-            stale:
-              type: boolean
-            error:
-              type: string
-              nullable: true
+          description: Data provider identifier
         graphApi:
           type: object
           properties:
-            enabled:
-              type: boolean
-            available:
+            connected:
               type: boolean
             status:
               type: string
@@ -996,8 +1010,9 @@ components:
               type: string
             timeoutMs:
               type: integer
-            reason:
+            error:
               type: string
+              nullable: true
         config:
           type: object
           properties:
@@ -1005,8 +1020,15 @@ components:
               type: integer
             defaultLatencyMetric:
               type: string
-            graphApiEnabled:
+        telemetry:
+          type: object
+          properties:
+            enabled:
               type: boolean
+              description: Whether telemetry collection is enabled
+            workerEnabled:
+              type: boolean
+              description: Whether background telemetry polling worker is enabled
         uptimeSeconds:
           type: number
 
@@ -1334,9 +1356,17 @@ components:
           type: integer
           default: 1
           description: Number of replicas to deploy
+        timeWindow:
+          type: string
+          description: |
+            Historical time window for node capacity analysis (optional).
+            When provided, uses historical averaged metrics instead of current snapshot.
+            Format: number + unit (e.g., '1h', '24h', '1w', '7d').
+            Units: h=hours, d=days, w=weeks.
+          example: "1w"
         dependencies:
           type: array
-          description: List of dependencies for the new service
+          description: List of dependencies for the new service (optional, used for risk analysis)
           items:
             $ref: '#/components/schemas/ServiceDependency'
 

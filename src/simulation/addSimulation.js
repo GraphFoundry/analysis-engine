@@ -179,9 +179,16 @@ async function simulateAdd(request) {
     const scoredNodes = nodeAnalysis.map(n => {
         let score = 0;
         if (n.canFit) {
-            const cpuHeadroom = n.cpuTotal > 0 ? n.cpuAvailable / n.cpuTotal : 0;
-            const ramHeadroom = n.ramTotalMB > 0 ? n.ramAvailableMB / n.ramTotalMB : 0;
-            // Base 50 + up to 50 for headroom
+            // Calculate PROJECTED headroom (after placing the pod)
+            // This makes the score sensitive to the size of the request.
+            // A large pod that uses up most of the remaining space should result in a lower score (tighter fit).
+            const projectedCpu = Math.max(0, n.cpuAvailable - cpuRequest);
+            const projectedRam = Math.max(0, n.ramAvailableMB - ramRequest);
+
+            const cpuHeadroom = n.cpuTotal > 0 ? projectedCpu / n.cpuTotal : 0;
+            const ramHeadroom = n.ramTotalMB > 0 ? projectedRam / n.ramTotalMB : 0;
+
+            // Base 50 + up to 50 for projected headroom
             score = Math.floor(50 + ((cpuHeadroom + ramHeadroom) / 2) * 50);
         } else {
             // 0-49 based on how close it is

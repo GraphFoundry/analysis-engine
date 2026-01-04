@@ -174,11 +174,11 @@ class TelemetryService {
             service,
             namespace,
             AVG(request_rate) AS avg_request_rate,
-            AVG(NULLIF(error_rate, 0)) AS avg_error_rate,
-            AVG(NULLIF(p50, 0)) AS avg_p50,
-            AVG(NULLIF(p95, 0)) AS avg_p95,
-            AVG(NULLIF(p99, 0)) AS avg_p99,
-            AVG(NULLIF(availability, 0)) AS avg_availability
+            AVG(error_rate) AS avg_error_rate,
+            AVG(p50) AS avg_p50,
+            AVG(p95) AS avg_p95,
+            AVG(p99) AS avg_p99,
+            AVG(availability) AS avg_availability
           FROM service_metrics
           WHERE ${serviceFilter}
             AND time >= '${from}'
@@ -229,20 +229,20 @@ class TelemetryService {
         }
 
         const query = `
-          SELECT 
-            DATE_BIN(INTERVAL '${stepSeconds} seconds', time, '1970-01-01T00:00:00Z'::TIMESTAMP) AS bucket,
-            "from" AS from_service,
-            "to" AS to_service,
-            namespace,
-            AVG(request_rate) AS avg_request_rate,
-            AVG(NULLIF(error_rate, 0)) AS avg_error_rate,
-            AVG(NULLIF(p50, 0)) AS avg_p50,
-            AVG(NULLIF(p95, 0)) AS avg_p95,
-            AVG(NULLIF(p99, 0)) AS avg_p99
-          FROM edge_metrics
-          WHERE ${conditions.join(' AND ')}
-          GROUP BY bucket, from_service, to_service, namespace
-          ORDER BY bucket ASC
+            SELECT 
+                DATE_BIN(INTERVAL '${stepSeconds} seconds', time, '1970-01-01T00:00:00Z'::TIMESTAMP) AS bucket,
+                "from" AS from_service,
+                "to" AS to_service,
+                namespace,
+                AVG(request_rate) AS avg_request_rate,
+                AVG(error_rate) AS avg_error_rate,
+                AVG(p50) AS avg_p50,
+                AVG(p95) AS avg_p95,
+                AVG(p99) AS avg_p99
+            FROM edge_metrics
+            WHERE ${conditions.join(' AND ')}
+            GROUP BY bucket, from_service, to_service, namespace
+            ORDER BY bucket ASC
         `;
 
         const results = [];

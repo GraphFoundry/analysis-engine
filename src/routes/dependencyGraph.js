@@ -58,7 +58,7 @@ router.get('/snapshot', async (req, res) => {
         rawServices.forEach(svc => {
             const ns = svc.namespace || 'default';
             serviceMap.set(svc.name, ns);
-            
+
             // Extract metrics from service object
             // Graph Engine returns: { name, namespace, rps, errorRate, p95, podCount, availability }
             metricsMap.set(svc.name, {
@@ -106,25 +106,22 @@ router.get('/snapshot', async (req, res) => {
                 const toNs = e.namespace || 'default';
                 const edgeId = `${fromNs}:${e.from}->${toNs}:${e.to}`;
 
-                // Edge metrics (if Graph Engine provides them)
-                const edgeMetrics = e.metrics || {};
-
                 return {
                     id: edgeId,
                     source: `${fromNs}:${e.from}`,
                     target: `${toNs}:${e.to}`,
-                    // Optional edge telemetry
-                    reqRate: edgeMetrics.requestRate ?? undefined,
-                    errorRatePct: edgeMetrics.errorRate ?? undefined,
-                    latencyP95Ms: edgeMetrics.p95 ?? undefined
+                    // Edge telemetry is at the root of the edge object in service-graph-engine
+                    reqRate: e.rps ?? undefined,
+                    errorRatePct: e.errorRate ? e.errorRate * 100 : undefined, // Convert 0-1 to %
+                    latencyP95Ms: e.p95 ?? undefined
                 };
             });
 
         // Count nodes and edges with metrics (for debugging)
-        const nodesWithMetrics = nodes.filter(n => 
+        const nodesWithMetrics = nodes.filter(n =>
             n.reqRate !== undefined || n.errorRatePct !== undefined || n.latencyP95Ms !== undefined
         ).length;
-        const edgesWithMetrics = edges.filter(e => 
+        const edgesWithMetrics = edges.filter(e =>
             e.reqRate !== undefined || e.errorRatePct !== undefined || e.latencyP95Ms !== undefined
         ).length;
 
@@ -183,7 +180,7 @@ function calculateRiskLevel(metrics) {
     // Critical conditions
     if (podCount === 0) return 'CRITICAL';
     if (availability !== null && availability !== undefined && availability < 50) return 'CRITICAL';
-    
+
     // High risk conditions
     if (errorRate > 5) return 'HIGH';
     if (availability !== null && availability !== undefined && availability < 95) return 'HIGH';

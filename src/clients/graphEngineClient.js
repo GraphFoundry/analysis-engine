@@ -364,7 +364,7 @@ async function getMetricsSnapshot() {
  */
 async function getCentralityScores() {
     const baseUrl = normalizeBaseUrl(config.graphApi.baseUrl);
-    const url = `${baseUrl}/centrality/scores`;
+    const url = `${baseUrl}/centrality`;
     return httpGet(url, config.graphApi.timeoutMs);
 }
 

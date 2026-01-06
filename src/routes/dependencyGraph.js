@@ -1,5 +1,5 @@
 const express = require('express');
-const { getMetricsSnapshot, checkGraphHealth } = require('../clients/graphEngineClient');
+const { getMetricsSnapshot, checkGraphHealth, getCentralityScores } = require('../clients/graphEngineClient');
 
 const router = express.Router();
 
@@ -17,10 +17,11 @@ router.get('/snapshot', async (req, res) => {
     try {
         const { namespace } = req.query;
 
-        // Fetch snapshot and health in parallel
-        const [snapshotResult, healthResult] = await Promise.all([
+        // Fetch snapshot, health and centrality in parallel
+        const [snapshotResult, healthResult, centralityResult] = await Promise.all([
             getMetricsSnapshot(),
-            checkGraphHealth()
+            checkGraphHealth(),
+            getCentralityScores()
         ]);
 
         // Extract freshness info
@@ -70,6 +71,14 @@ router.get('/snapshot', async (req, res) => {
             });
         });
 
+        // Build centrality map
+        const centralityMap = new Map();
+        if (centralityResult.ok && centralityResult.data?.scores) {
+            centralityResult.data.scores.forEach(s => {
+                centralityMap.set(s.service, s);
+            });
+        }
+
         // Enrich nodes with telemetry
         const nodes = rawServices
             .filter(svc => !namespace || svc.namespace === namespace)
@@ -95,6 +104,8 @@ router.get('/snapshot', async (req, res) => {
                     availabilityPct: metrics.availability ?? undefined,
                     podCount: metrics.podCount ?? undefined,
                     availability: svc.availability ?? undefined, // 0-1 score from Graph Engine
+                    pageRank: centralityMap.get(svc.name)?.pagerank,
+                    betweenness: centralityMap.get(svc.name)?.betweenness,
                     updatedAt: new Date().toISOString()
                 };
             });

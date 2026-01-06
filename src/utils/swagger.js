@@ -49,8 +49,8 @@ function setupSwagger(app) {
             return;
         }
 
-        // Load OpenAPI spec
-        const specPath = path.join(__dirname, '..', 'openapi.yaml');
+        // Load OpenAPI spec (in root directory, not src/)
+        const specPath = path.join(__dirname, '..', '..', 'openapi.yaml');
         
         if (!fs.existsSync(specPath)) {
             console.error(`[SWAGGER] OpenAPI spec not found at: ${specPath}`);

@@ -87,6 +87,9 @@ const config = {
   telemetryWorker: {
     enabled: process.env.TELEMETRY_WORKER_ENABLED !== 'false',
     pollIntervalMs: parseInt(process.env.TELEMETRY_POLL_INTERVAL_MS) || 60000
+  },
+  telemetry: {
+    enabled: process.env.TELEMETRY_ENABLED !== 'false'
   }
 };
 

@@ -25,11 +25,11 @@ function parseServiceRef(idOrName) {
 
     const str = String(idOrName);
     const colonIdx = str.indexOf(':');
-    
+
     if (colonIdx > 0) {
-        return { 
-            namespace: str.slice(0, colonIdx) || 'default', 
-            name: str.slice(colonIdx + 1) || '' 
+        return {
+            namespace: str.slice(0, colonIdx) || 'default',
+            name: str.slice(colonIdx + 1) || ''
         };
     }
     return { namespace: 'default', name: str };
@@ -203,9 +203,10 @@ function estimateBoundaryLostTraffic(snapshot, reachableSet, blockedKey) {
  * 
  * Algorithm:
  * 1. Fetch k-hop upstream neighborhood
- * 2. Treat target as unavailable (not actually removed from snapshot)
- * 3. For each direct caller, aggregate lostTrafficRps (sum of all edge rates to target)
- * 4. Find top N caller→target paths (sorted by pathRps)
+ * 2. If timeWindow provided, fetch aggregated metrics and overlay on snapshot
+ * 3. Treat target as unavailable (not actually removed from snapshot)
+ * 4. For each direct caller, aggregate lostTrafficRps (sum of all edge rates to target)
+ * 5. Find top N caller→target paths (sorted by pathRps)
  * 
  * @param {FailureSimulationRequest} request - Simulation request
  * @param {Object} options - Optional parameters (traceOptions, correlationId)
@@ -213,58 +214,84 @@ function estimateBoundaryLostTraffic(snapshot, reachableSet, blockedKey) {
  */
 async function simulateFailure(request, options = {}) {
     const maxDepth = request.maxDepth || config.simulation.maxTraversalDepth;
+    const timeWindow = request.timeWindow;
     const trace = options.trace || createTrace(options.traceOptions || {});
-    
+
     // Validate depth (must be integer 1-3)
     if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 3) {
         throw new Error(`maxDepth must be integer 1, 2, or 3. Got: ${maxDepth}`);
     }
-    
+
     // Fetch upstream neighborhood via Graph Engine
     const provider = getProvider();
     const snapshot = await provider.fetchUpstreamNeighborhood(request.serviceId, maxDepth, { trace });
-    
+
+    // ========================================================================
+    // Optional: Overlay Time Window Telemetry
+    // ========================================================================
+    if (timeWindow) {
+        const telemetryService = require('../services/telemetryService');
+        const { from, to } = telemetryService.parseTimeWindow(timeWindow);
+
+        await trace.stage('overlay-telemetry', async () => {
+            const metricsMap = await telemetryService.getAggregatedEdgeMetrics(from, to);
+
+            // Overlay metrics on existing edges in the snapshot
+            for (const edge of snapshot.edges) {
+                const key = `${edge.source}->${edge.target}`;
+                const metrics = metricsMap.get(key);
+
+                if (metrics) {
+                    edge.rate = metrics.requestRate;
+                    edge.errorRate = metrics.errorRate;
+                }
+            }
+        });
+
+        trace.setSummary('overlay-telemetry', { timeWindow, from, to });
+    }
+
     // Use normalized target key from snapshot (handles namespace:name vs plain name difference)
     const targetKey = snapshot.targetKey || request.serviceId;
-    
+
     // Get target node info
     const targetNode = snapshot.nodes.get(targetKey);
     if (!targetNode) {
         throw new Error(`Service not found: ${request.serviceId}`);
     }
-    
+
     // Build canonical target reference
     const targetOut = nodeToOutRef(targetNode, targetKey);
-    
+
     // Find all direct callers of target
     const directCallers = snapshot.incomingEdges.get(targetKey) || [];
-    
+
     // Aggregate lost traffic by caller (handles duplicate edges to same target)
     const callerMap = new Map();
     for (const edge of directCallers) {
         const id = edge.source;
         const callerNode = snapshot.nodes.get(id);
         const callerOut = nodeToOutRef(callerNode, id);
-        
-        const prev = callerMap.get(id) || { 
-            serviceId: callerOut.serviceId, 
+
+        const prev = callerMap.get(id) || {
+            serviceId: callerOut.serviceId,
             name: callerOut.name,
             namespace: callerOut.namespace,
-            lostTrafficRps: 0, 
-            edgeErrorRate: 0 
+            lostTrafficRps: 0,
+            edgeErrorRate: 0
         };
-        
+
         prev.lostTrafficRps += edge.rate;
         // Use max error rate as worst-case for this caller
         prev.edgeErrorRate = Math.max(prev.edgeErrorRate, edge.errorRate);
-        
+
         callerMap.set(id, prev);
     }
-    
+
     // Convert to array and sort by lost traffic descending
     const affectedCallers = Array.from(callerMap.values())
         .sort((a, b) => b.lostTrafficRps - a.lostTrafficRps);
-    
+
     // Find top N paths to target (de-duplicated by path key)
     const rawPaths = await trace.stage('path-analysis', async () => {
         return findTopPathsToTarget(
@@ -274,7 +301,7 @@ async function simulateFailure(request, options = {}) {
             config.simulation.maxPathsReturned * 2 // Fetch extra to allow for de-dupe
         );
     });
-    
+
     // De-duplicate paths by join key
     const seenPaths = new Set();
     const criticalPathsToTarget = [];
@@ -285,17 +312,17 @@ async function simulateFailure(request, options = {}) {
         criticalPathsToTarget.push(pathInfo);
         if (criticalPathsToTarget.length >= config.simulation.maxPathsReturned) break;
     }
-    
+
     // Add path-analysis summary to trace
     trace.setSummary('path-analysis', {
         pathsFound: rawPaths.length,
         pathsReturned: criticalPathsToTarget.length
     });
-    
+
     // ========================================================================
     // Phase 3: Downstream and Unreachable Impact Analysis
     // ========================================================================
-    
+
     // Direct downstream dependents of target (services the target calls)
     const directCallees = snapshot.outgoingEdges.get(targetKey) || [];
     const downstreamMap = new Map();
@@ -344,12 +371,12 @@ async function simulateFailure(request, options = {}) {
                 };
             })
             .sort((a, b) => b.lostTrafficRps - a.lostTrafficRps);
-        
+
         const totalLost = affectedCallers.reduce((sum, c) => sum + c.lostTrafficRps, 0);
-        
+
         return { unreachableServices: unreachableList, totalLostTrafficRps: totalLost };
     });
-    
+
     // Add compute-impact summary to trace
     trace.setSummary('compute-impact', {
         affectedCallersCount: affectedCallers.length,
@@ -357,11 +384,11 @@ async function simulateFailure(request, options = {}) {
         unreachableCount: unreachableServices.length,
         totalLostTrafficRps
     });
-    
+
     // Determine data confidence based on staleness
     const dataFreshness = snapshot.dataFreshness ?? null;
     const confidence = dataFreshness?.stale ? 'low' : 'high';
-    
+
     // Build explanation for operators
     const explanation = `If ${targetOut.name} fails, ${affectedCallers.length} upstream caller(s) lose direct access, ` +
         `${affectedDownstream.length} downstream service(s) lose traffic from this target, ` +
@@ -391,7 +418,7 @@ async function simulateFailure(request, options = {}) {
     result.recommendations = await trace.stage('recommendations', async () => {
         return generateFailureRecommendations(result);
     });
-    
+
     // Add recommendations summary to trace
     trace.setSummary('recommendations', {
         recommendationCount: result.recommendations.length

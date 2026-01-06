@@ -46,7 +46,7 @@ describe('GraphEngineClient._httpGet', () => {
 
     test('returns ok:true with parsed JSON on 200 response', async () => {
         const responseData = { status: 'OK', stale: false, lastUpdatedSecondsAgo: 30 };
-        
+
         const mock = await createMockServer((req, res) => {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(responseData));
@@ -54,10 +54,10 @@ describe('GraphEngineClient._httpGet', () => {
         mockServer = mock.server;
 
         // Import after setting up mock
-        const { _httpGet } = require('../src/graphEngineClient');
-        
+        const { _httpGet } = require('../src/clients/graphEngineClient');
+
         const result = await _httpGet(`${mock.url}/graph/health`, 5000);
-        
+
         assert.strictEqual(result.ok, true);
         assert.deepStrictEqual(result.data, responseData);
     });
@@ -69,10 +69,10 @@ describe('GraphEngineClient._httpGet', () => {
         });
         mockServer = mock.server;
 
-        const { _httpGet } = require('../src/graphEngineClient');
-        
+        const { _httpGet } = require('../src/clients/graphEngineClient');
+
         const result = await _httpGet(`${mock.url}/graph/health`, 5000);
-        
+
         assert.strictEqual(result.ok, false);
         assert.strictEqual(result.status, 500);
         assert.strictEqual(result.error, 'HTTP 500');
@@ -85,23 +85,23 @@ describe('GraphEngineClient._httpGet', () => {
         });
         mockServer = mock.server;
 
-        const { _httpGet } = require('../src/graphEngineClient');
-        
+        const { _httpGet } = require('../src/clients/graphEngineClient');
+
         // Use very short timeout
         const result = await _httpGet(`${mock.url}/graph/health`, 50);
-        
+
         assert.strictEqual(result.ok, false);
         assert.strictEqual(result.error, 'Request timeout');
     });
 
     test('returns ok:false on connection refused', async () => {
-        const { _httpGet } = require('../src/graphEngineClient');
-        
+        const { _httpGet } = require('../src/clients/graphEngineClient');
+
         // Use a port that's not listening
         const result = await _httpGet('http://127.0.0.1:59999/graph/health', 1000);
-        
+
         assert.strictEqual(result.ok, false);
-        assert.ok(result.error.includes('ECONNREFUSED') || result.error.includes('connect'), 
+        assert.ok(result.error.includes('ECONNREFUSED') || result.error.includes('connect'),
             `Expected connection error, got: ${result.error}`);
     });
 
@@ -112,12 +112,12 @@ describe('GraphEngineClient._httpGet', () => {
         });
         mockServer = mock.server;
 
-        const { _httpGet } = require('../src/graphEngineClient');
-        
+        const { _httpGet } = require('../src/clients/graphEngineClient');
+
         const result = await _httpGet(`${mock.url}/graph/health`, 5000);
-        
+
         assert.strictEqual(result.ok, false);
-        assert.ok(result.error.startsWith('Invalid JSON response:'), 
+        assert.ok(result.error.startsWith('Invalid JSON response:'),
             `Expected 'Invalid JSON response:...' but got: ${result.error}`);
     });
 
@@ -128,12 +128,12 @@ describe('GraphEngineClient._httpGet', () => {
         });
         mockServer = mock.server;
 
-        const { _httpGet } = require('../src/graphEngineClient');
-        
+        const { _httpGet } = require('../src/clients/graphEngineClient');
+
         const result = await _httpGet(`${mock.url}/graph/health`, 5000);
-        
+
         assert.strictEqual(result.ok, false);
-        assert.ok(result.error.startsWith('Invalid JSON response:'), 
+        assert.ok(result.error.startsWith('Invalid JSON response:'),
             `Expected 'Invalid JSON response:...' but got: ${result.error}`);
     });
 });
@@ -143,27 +143,27 @@ describe('GraphEngineClient.checkGraphHealth', () => {
 
     beforeEach(() => {
         // Clear require cache to reset config
-        delete require.cache[require.resolve('../src/config')];
-        delete require.cache[require.resolve('../src/graphEngineClient')];
+        delete require.cache[require.resolve('../src/config/config')];
+        delete require.cache[require.resolve('../src/clients/graphEngineClient')];
     });
 
     afterEach(async () => {
         // Restore original env
         process.env = { ...originalEnv };
-        
+
         if (mockServer) {
             await closeMockServer(mockServer);
             mockServer = null;
         }
-        
+
         // Clear require cache
-        delete require.cache[require.resolve('../src/config')];
-        delete require.cache[require.resolve('../src/graphEngineClient')];
+        delete require.cache[require.resolve('../src/config/config')];
+        delete require.cache[require.resolve('../src/clients/graphEngineClient')];
     });
 
     test('returns health data when API responds', async () => {
         const responseData = { status: 'OK', stale: false, lastUpdatedSecondsAgo: 45, windowMinutes: 5 };
-        
+
         const mock = await createMockServer((req, res) => {
             if (req.url === '/graph/health') {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -176,11 +176,11 @@ describe('GraphEngineClient.checkGraphHealth', () => {
         mockServer = mock.server;
 
         process.env.SERVICE_GRAPH_ENGINE_URL = mock.url;
-        
-        const { checkGraphHealth } = require('../src/graphEngineClient');
-        
+
+        const { checkGraphHealth } = require('../src/clients/graphEngineClient');
+
         const result = await checkGraphHealth();
-        
+
         assert.strictEqual(result.ok, true);
         assert.deepStrictEqual(result.data, responseData);
     });
@@ -192,22 +192,22 @@ describe('/health endpoint graphApi field', () => {
 
     beforeEach(() => {
         // Clear require cache to reset config
-        delete require.cache[require.resolve('../src/config')];
+        delete require.cache[require.resolve('../src/config/config')];
     });
 
     afterEach(() => {
         // Restore original env
         process.env = { ...originalEnv };
         // Clear require cache
-        delete require.cache[require.resolve('../src/config')];
+        delete require.cache[require.resolve('../src/config/config')];
     });
-    
+
     test('config has graphApi section with expected structure', () => {
         // Note: This test validates structure, not defaults, because .env may override defaults
-        delete require.cache[require.resolve('../src/config')];
-        
-        const config = require('../src/config');
-        
+        delete require.cache[require.resolve('../src/config/config')];
+
+        const config = require('../src/config/config');
+
         assert.strictEqual(typeof config.graphApi, 'object', 'graphApi should be an object');
         assert.strictEqual(typeof config.graphApi.timeoutMs, 'number', 'timeoutMs should be number');
     });
@@ -215,8 +215,8 @@ describe('/health endpoint graphApi field', () => {
 
 describe('URL normalization', () => {
     test('normalizeBaseUrl removes trailing slash', () => {
-        const { _normalizeBaseUrl } = require('../src/graphEngineClient');
-        
+        const { _normalizeBaseUrl } = require('../src/clients/graphEngineClient');
+
         assert.strictEqual(_normalizeBaseUrl('http://localhost:3000/'), 'http://localhost:3000');
         assert.strictEqual(_normalizeBaseUrl('http://localhost:3000'), 'http://localhost:3000');
         assert.strictEqual(_normalizeBaseUrl('https://api.example.com/'), 'https://api.example.com');
@@ -236,8 +236,8 @@ describe('getCentralityTop', () => {
             if (!(key in originalEnv)) delete process.env[key];
         });
         Object.assign(process.env, originalEnv);
-        delete require.cache[require.resolve('../src/config')];
-        delete require.cache[require.resolve('../src/graphEngineClient')];
+        delete require.cache[require.resolve('../src/config/config')];
+        delete require.cache[require.resolve('../src/clients/graphEngineClient')];
     });
 
     test('returns error for invalid metric', async () => {
@@ -247,14 +247,14 @@ describe('getCentralityTop', () => {
         });
         mockServer = mock.server;
 
-        delete require.cache[require.resolve('../src/config')];
-        delete require.cache[require.resolve('../src/graphEngineClient')];
+        delete require.cache[require.resolve('../src/config/config')];
+        delete require.cache[require.resolve('../src/clients/graphEngineClient')];
         process.env.USE_GRAPH_ENGINE_API = 'true';
         process.env.GRAPH_ENGINE_BASE_URL = mock.url;
-        
-        const { getCentralityTop } = require('../src/graphEngineClient');
+
+        const { getCentralityTop } = require('../src/clients/graphEngineClient');
         const result = await getCentralityTop('invalid_metric', 5);
-        
+
         assert.strictEqual(result.ok, false);
         assert.ok(result.error.includes('Invalid metric'));
     });
@@ -277,14 +277,14 @@ describe('getCentralityTop', () => {
         });
         mockServer = mock.server;
 
-        delete require.cache[require.resolve('../src/config')];
-        delete require.cache[require.resolve('../src/graphEngineClient')];
+        delete require.cache[require.resolve('../src/config/config')];
+        delete require.cache[require.resolve('../src/clients/graphEngineClient')];
         process.env.USE_GRAPH_ENGINE_API = 'true';
         process.env.GRAPH_ENGINE_BASE_URL = mock.url;
-        
-        const { getCentralityTop } = require('../src/graphEngineClient');
+
+        const { getCentralityTop } = require('../src/clients/graphEngineClient');
         const result = await getCentralityTop('pagerank', 5);
-        
+
         assert.strictEqual(result.ok, true);
         assert.strictEqual(result.data.metric, 'pagerank');
         assert.strictEqual(result.data.top.length, 2);
@@ -301,14 +301,14 @@ describe('getCentralityTop', () => {
         });
         mockServer = mock.server;
 
-        delete require.cache[require.resolve('../src/config')];
-        delete require.cache[require.resolve('../src/graphEngineClient')];
+        delete require.cache[require.resolve('../src/config/config')];
+        delete require.cache[require.resolve('../src/clients/graphEngineClient')];
         process.env.USE_GRAPH_ENGINE_API = 'true';
         process.env.GRAPH_ENGINE_BASE_URL = mock.url;
-        
-        const { getCentralityTop } = require('../src/graphEngineClient');
+
+        const { getCentralityTop } = require('../src/clients/graphEngineClient');
         const result = await getCentralityTop('betweenness', 3);
-        
+
         assert.strictEqual(result.ok, true);
         assert.strictEqual(result.data.metric, 'betweenness');
     });

@@ -47,7 +47,9 @@ class DecisionStore {
         CREATE INDEX IF NOT EXISTS idx_decisions_correlation_id ON decisions(correlation_id);
       `);
 
-      console.log(`[DecisionStore] Initialized at ${this.dbPath}`);
+      // Log absolute path for debugging (safe, no secrets)
+      const absolutePath = require('node:path').resolve(this.dbPath);
+      console.log(`[DecisionStore] Initialized at ${absolutePath}`);
     } catch (error) {
       console.error(`[DecisionStore] Initialization failed: ${error.message}`);
       this.db = null;

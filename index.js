@@ -2,9 +2,10 @@ const express = require('express');
 const config = require('./src/config/config');
 const { validateEnv } = require('./src/config/config');
 const { getProvider } = require('./src/storage/providers');
-const { checkGraphHealth, getServices } = require('./src/clients/graphEngineClient');
+const { checkGraphHealth, getServices, getServicesWithPlacement, getMetricsSnapshot } = require('./src/clients/graphEngineClient');
 const { simulateFailure } = require('./src/simulation/failureSimulation');
 const { simulateScaling } = require('./src/simulation/scalingSimulation');
+const { simulateAdd } = require('./src/simulation/addSimulation');
 const { getTopRiskServices } = require('./src/simulation/riskAnalysis');
 const { correlationMiddleware } = require('./src/middleware/correlation');
 const { rateLimitMiddleware } = require('./src/middleware/rateLimit');
@@ -12,6 +13,7 @@ const { setupSwagger } = require('./src/utils/swagger');
 const { parseTraceOptions } = require('./src/utils/traceOptions');
 const { createTrace } = require('./src/utils/trace');
 const { getWorker } = require('./src/telemetry/pollWorker');
+const { getDecisionStore, closeDecisionStore } = require('./src/storage/decisionStoreSingleton');
 const {
     parseServiceIdentifier,
     normalizePodParams,
@@ -20,6 +22,7 @@ const {
     validateDepth,
     validateScalingModel
 } = require('./src/utils/validator');
+const dependencyGraphRouter = require('./src/routes/dependencyGraph');
 
 // Validate environment before starting server
 validateEnv();
@@ -33,6 +36,9 @@ setupSwagger(app);
 // Correlation ID middleware (generates UUID, sets X-Correlation-Id header, logs requests)
 app.use(correlationMiddleware());
 
+// Mount dependency graph routes
+app.use('/api/dependency-graph', dependencyGraphRouter);
+
 // Track server start time
 const startTime = Date.now();
 
@@ -44,21 +50,21 @@ const startTime = Date.now();
 app.get('/health', async (req, res) => {
     try {
         const uptimeSeconds = Math.round((Date.now() - startTime) / 100) / 10;
-        
+
         // Check Graph Engine health
         const graphResult = await checkGraphHealth();
-        
+
         let status = 'ok';
         let graphApi;
-        
+
         if (graphResult.ok) {
             const { stale, lastUpdatedSecondsAgo } = graphResult.data;
-            
+
             // Status is degraded if graph is stale
             if (stale) {
                 status = 'degraded';
             }
-            
+
             graphApi = {
                 connected: true,
                 status: graphResult.data.status,
@@ -86,6 +92,10 @@ app.get('/health', async (req, res) => {
                 maxTraversalDepth: config.simulation.maxTraversalDepth,
                 defaultLatencyMetric: config.simulation.defaultLatencyMetric
             },
+            telemetry: {
+                enabled: config.telemetry.enabled,
+                workerEnabled: config.telemetryWorker.enabled
+            },
             uptimeSeconds
         });
     } catch (error) {
@@ -101,14 +111,15 @@ app.get('/health', async (req, res) => {
 
 /**
  * GET /services
- * List all discovered services from the graph
+ * List all discovered services from the graph with pod-level placement metrics
  * Returns normalized serviceId (namespace:name) for UI consumption
+ * Includes pod-level container metrics (ramUsedMB, cpuUsagePercent) and node-level resources
  */
 app.get('/services', async (req, res) => {
     try {
-        // Fetch services and health in parallel
+        // Fetch services with placement and health in parallel
         const [servicesResult, healthResult] = await Promise.all([
-            getServices(),
+            getServicesWithPlacement(),
             checkGraphHealth()
         ]);
 
@@ -135,12 +146,16 @@ app.get('/services', async (req, res) => {
             });
         }
 
-        // Normalize services to include serviceId
+        // Process Services with Placement Data
         const rawServices = servicesResult.data?.services || [];
+
         const services = rawServices.map(svc => ({
             serviceId: `${svc.namespace || 'default'}:${svc.name}`,
             name: svc.name,
-            namespace: svc.namespace || 'default'
+            namespace: svc.namespace || 'default',
+            ...(svc.podCount !== undefined && { podCount: svc.podCount }),
+            ...(svc.availability !== undefined && { availability: svc.availability }),
+            ...(svc.placement && { placement: svc.placement })
         }));
 
         res.json({
@@ -150,6 +165,7 @@ app.get('/services', async (req, res) => {
             lastUpdatedSecondsAgo,
             windowMinutes
         });
+
     } catch (error) {
         // Graph Engine unreachable - return 503 with empty services
         res.status(503).json({
@@ -181,7 +197,7 @@ app.post('/simulate/failure', simulationRateLimiter, async (req, res) => {
         // Parse trace options from query string
         const traceOptions = parseTraceOptions(req.query);
         const trace = createTrace(traceOptions);
-        
+
         // Validate and parse request (inside trace stage)
         const { identifier, maxDepth: resolvedMaxDepth } = await trace.stage('scenario-parse', async () => {
             const id = parseServiceIdentifier(req.body);
@@ -192,13 +208,13 @@ app.post('/simulate/failure', simulationRateLimiter, async (req, res) => {
             );
             return { identifier: id, maxDepth: depth };
         });
-        
+
         // Add scenario-parse summary to trace
         trace.setSummary('scenario-parse', {
             serviceIdResolved: identifier.serviceId,
             maxDepth: resolvedMaxDepth
         });
-        
+
         // Execute simulation with timeout
         const simulationPromise = simulateFailure({
             serviceId: identifier.serviceId,
@@ -208,21 +224,51 @@ app.post('/simulate/failure', simulationRateLimiter, async (req, res) => {
             trace,
             correlationId: req.correlationId
         });
-        
+
         const timeoutPromise = new Promise((_, reject) => {
             setTimeout(
                 () => reject(new Error('Simulation timeout exceeded')),
                 config.simulation.timeoutMs
             );
         });
-        
+
         const result = await Promise.race([simulationPromise, timeoutPromise]);
-        
+
         // Add correlationId to body only when trace enabled
         if (traceOptions.trace && req.correlationId) {
             result.correlationId = req.correlationId;
         }
-        
+
+        // Auto-log decision to SQLite (best-effort, silent failure)
+        const decisionStore = getDecisionStore();
+        if (decisionStore) {
+            try {
+                const inserted = decisionStore.logDecision({
+                    timestamp: new Date().toISOString(),
+                    type: 'failure',
+                    scenario: {
+                        serviceId: identifier.serviceId,
+                        maxDepth: resolvedMaxDepth
+                    },
+                    result: {
+                        totalLostTrafficRps: result.totalLostTrafficRps,
+                        affectedCallersCount: result.affectedCallers?.length || 0,
+                        affectedDownstreamCount: result.affectedDownstream?.length || 0,
+                        unreachableCount: result.unreachableServices?.length || 0,
+                        confidence: result.confidence
+                    },
+                    correlationId: req.correlationId
+                });
+
+                // Debug logging (guarded by env var)
+                if (process.env.DEBUG_DECISIONS === 'true') {
+                    console.log(`[DecisionStore Debug] Auto-logged failure: id=${inserted.id}, serviceId=${identifier.serviceId}`);
+                }
+            } catch (error_) {
+                console.error('[DecisionStore] Auto-log failed (non-blocking):', error_.message);
+            }
+        }
+
         res.json(result);
     } catch (error) {
         // Handle errors with explicit statusCode (e.g., stale graph data)
@@ -260,7 +306,7 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
         // Parse trace options from query string
         const traceOptions = parseTraceOptions(req.query);
         const trace = createTrace(traceOptions);
-        
+
         // Validate and parse request (inside trace stage)
         const { identifier, newPods, latencyMetric: resolvedLatencyMetric, maxDepth: resolvedMaxDepth, model: resolvedModel } = await trace.stage('scenario-parse', async () => {
             const id = parseServiceIdentifier(req.body);
@@ -276,15 +322,15 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
                 config.simulation.maxTraversalDepth
             );
             const m = validateScalingModel(req.body.model);
-            return { 
-                identifier: id, 
-                newPods: pods, 
-                latencyMetric: metric, 
-                maxDepth: depth, 
-                model: m 
+            return {
+                identifier: id,
+                newPods: pods,
+                latencyMetric: metric,
+                maxDepth: depth,
+                model: m
             };
         });
-        
+
         // Add scenario-parse summary to trace
         trace.setSummary('scenario-parse', {
             serviceIdResolved: identifier.serviceId,
@@ -292,7 +338,7 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
             latencyMetric: resolvedLatencyMetric,
             model: resolvedModel
         });
-        
+
         // Execute simulation with timeout
         const simulationPromise = simulateScaling({
             serviceId: identifier.serviceId,
@@ -306,21 +352,53 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
             trace,
             correlationId: req.correlationId
         });
-        
+
         const timeoutPromise = new Promise((_, reject) => {
             setTimeout(
                 () => reject(new Error('Simulation timeout exceeded')),
                 config.simulation.timeoutMs
             );
         });
-        
+
         const result = await Promise.race([simulationPromise, timeoutPromise]);
-        
+
         // Add correlationId to body only when trace enabled
         if (traceOptions.trace && req.correlationId) {
             result.correlationId = req.correlationId;
         }
-        
+
+        // Auto-log decision to SQLite (best-effort, silent failure)
+        const decisionStore = getDecisionStore();
+        if (decisionStore) {
+            try {
+                const inserted = decisionStore.logDecision({
+                    timestamp: new Date().toISOString(),
+                    type: 'scaling',
+                    scenario: {
+                        serviceId: identifier.serviceId,
+                        currentPods: req.body.currentPods,
+                        newPods,
+                        latencyMetric: resolvedLatencyMetric,
+                        maxDepth: resolvedMaxDepth
+                    },
+                    result: {
+                        predictedLatencyReduction: result.predictedLatencyReduction,
+                        latencyMetric: result.latencyMetric,
+                        affectedDownstreamCount: result.affectedDownstream?.length || 0,
+                        confidence: result.confidence
+                    },
+                    correlationId: req.correlationId
+                });
+
+                // Debug logging (guarded by env var)
+                if (process.env.DEBUG_DECISIONS === 'true') {
+                    console.log(`[DecisionStore Debug] Auto-logged scaling: id=${inserted.id}, serviceId=${identifier.serviceId}`);
+                }
+            } catch (error_) {
+                console.error('[DecisionStore] Auto-log failed (non-blocking):', error_.message);
+            }
+        }
+
         res.json(result);
     } catch (error) {
         // Handle errors with explicit statusCode (e.g., stale graph data)
@@ -340,6 +418,55 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
 });
 
 /**
+ * POST /simulate/add
+ * Simulate adding a new service (resource fit analysis)
+ * 
+ * Request body:
+ * - serviceName: string
+ * - cpuRequest: number (cores, default 0.1)
+ * - ramRequest: number (MB, default 128)
+ * - replicas: number (default 1)
+ */
+app.post('/simulate/add', simulationRateLimiter, async (req, res) => {
+    try {
+        const result = await simulateAdd(req.body);
+
+        // Auto-log decision to SQLite (best-effort)
+        const decisionStore = getDecisionStore();
+        if (decisionStore) {
+            try {
+                const inserted = decisionStore.logDecision({
+                    timestamp: new Date().toISOString(),
+                    type: 'add',
+                    scenario: {
+                        serviceName: req.body.serviceName,
+                        cpuRequest: req.body.cpuRequest,
+                        ramRequest: req.body.ramRequest,
+                        replicas: req.body.replicas
+                    },
+                    result: {
+                        recommendation: result.recommendation,
+                        success: result.success,
+                        confidence: result.confidence
+                    },
+                    correlationId: req.correlationId
+                });
+                if (process.env.DEBUG_DECISIONS === 'true') {
+                    console.log(`[DecisionStore Debug] Auto-logged add: id=${inserted.id}`);
+                }
+            } catch (error_) {
+                console.error('[DecisionStore] Auto-log failed:', error_.message);
+            }
+        }
+
+        res.json(result);
+    } catch (error) {
+        console.error('Simulation error:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
  * GET /risk/services/top
  * Get top services by risk (based on centrality metrics)
  * 
@@ -350,10 +477,10 @@ app.post('/simulate/scale', simulationRateLimiter, async (req, res) => {
 app.get('/risk/services/top', async (req, res) => {
     try {
         const metric = req.query.metric || 'pagerank';
-        const limit = Math.min(Math.max(parseInt(req.query.limit) || 5, 1), 20);
-        
+        const limit = Math.min(Math.max(Number.parseInt(req.query.limit) || 5, 1), 20);
+
         const result = await getTopRiskServices({ metric, limit });
-        
+
         res.json(result);
     } catch (error) {
         if (error.message.includes('Invalid metric')) {
@@ -385,7 +512,10 @@ const server = app.listen(config.server.port, () => {
     console.log(`Default latency metric: ${config.simulation.defaultLatencyMetric}`);
     console.log(`Scaling model: ${config.simulation.scalingModel} (alpha: ${config.simulation.scalingAlpha})`);
     console.log(`Timeout: ${config.simulation.timeoutMs}ms`);
-    
+
+    // Initialize DecisionStore singleton at startup
+    getDecisionStore();
+
     // Start background telemetry poll worker
     const pollWorker = getWorker();
     pollWorker.start();
@@ -394,11 +524,14 @@ const server = app.listen(config.server.port, () => {
 // Graceful shutdown
 const shutdown = async () => {
     console.log('\nShutting down service...');
-    
+
     // Stop poll worker
     const pollWorker = getWorker();
     await pollWorker.stop();
-    
+
+    // Close decision store
+    await closeDecisionStore();
+
     server.close();
     const provider = getProvider();
     await provider.close();

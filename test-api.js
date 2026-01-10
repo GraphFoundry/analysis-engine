@@ -15,7 +15,7 @@ async function test() {
         const result = await simulateFailure({ serviceId: 'default:frontend', maxDepth: 2 });
         console.log('✓ Failure simulation completed');
         console.log(`  Affected services: ${result.affectedCallers.length}`);
-        console.log(`  Top paths: ${result.criticalPathsBroken.length}`);
+        console.log(`  Top paths: ${result.criticalPathsToTarget.length}`);
         
         console.log('\n=== Success ===');
         process.exit(0);

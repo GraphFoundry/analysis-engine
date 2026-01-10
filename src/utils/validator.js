@@ -31,6 +31,35 @@ function parseServiceIdentifier(body) {
 }
 
 /**
+ * Normalize pod parameter aliases (newPods, targetPods, pods)
+ * Accepts aliases and returns canonical 'newPods' value
+ * 
+ * @param {Object} body - Request body
+ * @returns {number} - Normalized newPods value
+ * @throws {Error} If conflicting values provided or missing
+ */
+function normalizePodParams(body) {
+    const candidates = [
+        { key: 'newPods', value: body.newPods },
+        { key: 'targetPods', value: body.targetPods },
+        { key: 'pods', value: body.pods }
+    ].filter(c => c.value !== undefined && c.value !== null);
+    
+    if (candidates.length === 0) {
+        throw new Error('Must provide newPods (or alias: targetPods, pods)');
+    }
+    
+    // Check for conflicting values
+    const uniqueValues = [...new Set(candidates.map(c => c.value))];
+    if (uniqueValues.length > 1) {
+        const conflictDesc = candidates.map(c => `${c.key}=${c.value}`).join(', ');
+        throw new Error(`Conflicting pod values provided: ${conflictDesc}`);
+    }
+    
+    return candidates[0].value;
+}
+
+/**
  * Validate scaling parameters
  * 
  * @param {number} currentPods - Current pod count
@@ -122,6 +151,7 @@ function validateScalingModel(model) {
 
 module.exports = {
     parseServiceIdentifier,
+    normalizePodParams,
     validateScalingParams,
     validateLatencyMetric,
     validateDepth,

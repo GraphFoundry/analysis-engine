@@ -1,65 +1,151 @@
-# What-If Simulation Engine
+# Predictive Analysis Engine
 
 ## Overview
 
-The What-If Simulation Engine is a microservice observability tool that performs predictive impact analysis on service call graphs. It enables operators to simulate infrastructure changes—service failures and scaling operations—before executing them in production, thereby reducing risk and improving operational decision-making.
+The Predictive Analysis Engine is a microservice observability tool that performs predictive impact analysis on service call graphs. It enables operators to simulate infrastructure changes—service failures and scaling operations—before executing them in production, thereby reducing risk and improving operational decision-making.
 
-This service integrates with the existing Neo4j-based service graph infrastructure (populated by `service-graph-engine`) to provide real-time "what-if" analysis capabilities.
+**Source of Truth:** This service uses the Graph Engine API as its single data source. All graph topology and metrics data is retrieved via HTTP from `service-graph-engine`.
+
+## Quick Start (Local Development)
+
+### Prerequisites
+
+- **Node.js** v18+ (for running this service)
+- **Neo4j Desktop** (running locally on macOS)
+- **Minikube** (for microservice testbed)
+- **kubectl** (Kubernetes CLI)
+- **service-graph-engine** (running on port 3000)
+
+### Setup Steps
+
+1. **Start Minikube cluster with testbed:**
+   ```bash
+   # From repository root
+   chmod +x setup-local.sh
+   ./setup-local.sh
+   ```
+
+2. **Port-forward Prometheus (REQUIRED - keep running):**
+   ```bash
+   kubectl port-forward svc/prometheus -n istio-system 9090:9090
+   ```
+
+3. **Configure and start service-graph-engine:**
+   ```bash
+   cd ../service-graph-engine
+   cp .env.example .env
+   # Edit .env:
+   #   NEO4J_URI=bolt://localhost:7687
+   #   NEO4J_PASSWORD=your-actual-password
+   #   NEO4J_DATABASE=neo4j
+   #   PROMETHEUS_URL=http://localhost:9090
+   npm install
+   npm start
+   ```
+
+4. **Configure this service:**
+   ```bash
+   cd predictive-analysis-engine
+   cp .env.example .env
+   # Edit .env:
+   #   SERVICE_GRAPH_ENGINE_URL=http://localhost:3000
+   npm install
+   ```
+
+5. **Start this service:**
+   ```bash
+   npm start
+   ```
+
+6. **Generate traffic (so data flows into the system):**
+   ```bash
+   # Port-forward frontend (new terminal)
+   kubectl port-forward svc/frontend 8080:80
+   
+   # Access frontend to generate traffic
+   open http://localhost:8080
+   # Or use curl:
+   for i in {1..10}; do curl -s http://localhost:8080 > /dev/null; sleep 2; done
+   ```
+
+7. **Wait 1-2 minutes** for data collection, then test:
+   ```bash
+   curl http://localhost:5000/health
+   open http://localhost:5000/swagger
+   ```
+
+### Required Running Terminals
+
+```
+Terminal 1: kubectl port-forward svc/prometheus -n istio-system 9090:9090  ← REQUIRED
+Terminal 2: service-graph-engine (npm start)                               ← REQUIRED
+Terminal 3: predictive-analysis-engine (npm start)                         ← REQUIRED
+Terminal 4: kubectl port-forward svc/frontend 8080:80                      ← For traffic generation
+```
 
 ## Architecture
 
 ### System Context
 
 ```
-┌─────────────────────┐
-│ Prometheus          │
-│ (Metrics Source)    │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐       ┌──────────────────┐
-│ service-graph-      │──────▶│ Neo4j            │
-│ engine              │       │ (Graph Database) │
-│ (Metric Ingestion)  │       └────────┬─────────┘
-└─────────────────────┘                │
-                                       │ READ-ONLY
-                                       ▼
-                            ┌──────────────────────┐
-                            │ what-if-simulation-  │
-                            │ engine               │
-                            │ (This Service)       │
-                            └──────────┬───────────┘
-                                       │
-                                       ▼
-                            ┌──────────────────────┐
-                            │ REST API Consumers   │
-                            │ (Operators, UIs)     │
-                            └──────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    Minikube (3 nodes)                            │
+│                                                                   │
+│  ┌────────────────────────────────┐   ┌─────────────────────┐  │
+│  │  Microservice Testbed          │   │  Prometheus         │  │
+│  │  (11 services with Istio)      │──▶│  (Istio Metrics)    │  │
+│  └────────────────────────────────┘   └─────────────────────┘  │
+│                                             │ port-forward      │
+│                                             │ :9090             │
+└─────────────────────────────────────────────┼───────────────────┘
+                                              │
+                ┌─────────────────────────────┘
+                │
+┌───────────────┼────────────────── macOS ─────────────────────┐
+│               ▼                                                │
+│   ┌──────────────────────┐        ┌──────────────────────┐   │
+│   │  service-graph-      │        │  predictive-         │   │
+│   │  engine              │◄───────│  analysis-engine     │   │
+│   │  (Node.js :3000)     │        │  (Node.js :5000)     │   │
+│   └──────────────────────┘        └──────────────────────┘   │
+│            │                                                   │
+│            ▼                                                   │
+│   ┌──────────────────────┐                                    │
+│   │  Neo4j               │                                    │
+│   │  (localhost:7687)    │                                    │
+│   └──────────────────────┘                                    │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Design Principles
 
-1. **Read-Only Analysis**: All Neo4j queries are read-only. Graph modifications exist only in-memory during simulation execution.
+1. **Graph Engine Only**: This service exclusively uses the Graph Engine HTTP API. No direct database access. Graph modifications exist only in-memory during simulation execution.
 
 2. **Configurable Defaults**: All simulation parameters (latency metrics, scaling formulas, traversal depth) are configurable via environment variables or per-request overrides.
 
 3. **Performance Bounded**: Hard limits on traversal depth (max 3 hops) and path enumeration (top N=10) prevent combinatorial explosion on large graphs.
 
-4. **Timeout Enforcement**: Two-layer timeout protection (Neo4j transaction timeout + overall request timeout) ensures fast failure detection.
+4. **Timeout Enforcement**: HTTP request timeouts ensure fast failure detection when Graph Engine is unavailable.
 
-## Graph Schema
+## Data Model
 
-The engine operates on the following Neo4j schema (managed by `service-graph-engine`):
+The engine consumes graph data from the Graph Engine API with the following structure:
 
-**Nodes:**
-- Label: `Service`
-- Properties: `serviceId` (unique), `name`, `namespace`, `createdAt`, `updatedAt`, `pagerank`, `betweenness`
+**Service Nodes:**
+- `serviceId` / `name`: Service identifier (plain name like "frontend")
+- `namespace`: Service namespace (typically "default")
 
-**Relationships:**
-- Type: `CALLS_NOW` (direction: caller → callee)
-- Properties: `rate`, `errorRate`, `p50`, `p95`, `p99`, `windowStart`, `windowEnd`, `lastUpdated`
+**Edges (Calls):**
+- `from` → `to`: Caller → callee direction
+- `rate`: Request rate (RPS from Prometheus metrics)
+- `errorRate`: Error rate (RPS)
+- `p50`, `p95`, `p99`: Latency percentiles (milliseconds)
 
-**ServiceId Format:** `"namespace:name"` (e.g., `"default:frontend"`)
+> **Note:** The Graph Engine API provides plain service names (e.g., "frontend") rather than namespace-prefixed identifiers. This service handles both formats for backward compatibility.
+
+**Data Freshness:**
+- Graph Engine provides staleness indicators
+- Simulations abort if data is stale
 
 ## Configuration
 
@@ -67,23 +153,25 @@ All configuration is managed via environment variables with sensible defaults.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEO4J_URI` | `neo4j+s://...` | Neo4j connection URI |
-| `NEO4J_USER` | `neo4j` | Neo4j username |
-| `NEO4J_PASSWORD` | *(required)* | Neo4j password (never logged) |
+| `SERVICE_GRAPH_ENGINE_URL` | `http://service-graph-engine:3000` | Graph Engine API base URL |
+| `GRAPH_ENGINE_BASE_URL` | *(alias)* | Alternative name for SERVICE_GRAPH_ENGINE_URL |
+| `GRAPH_API_TIMEOUT_MS` | `5000` | Graph Engine HTTP request timeout (ms) |
 | `DEFAULT_LATENCY_METRIC` | `p95` | Default latency metric (p50, p95, p99) |
 | `MAX_TRAVERSAL_DEPTH` | `2` | Maximum k-hop traversal depth (1-3) |
 | `SCALING_MODEL` | `bounded_sqrt` | Scaling formula (bounded_sqrt, linear) |
 | `SCALING_ALPHA` | `0.5` | Fixed overhead fraction (0.0-1.0) |
 | `MIN_LATENCY_FACTOR` | `0.6` | Minimum latency improvement factor |
-| `TIMEOUT_MS` | `8000` | Query and request timeout (ms) |
+| `TIMEOUT_MS` | `8000` | Overall request timeout (ms) |
 | `MAX_PATHS_RETURNED` | `10` | Maximum paths in simulation results |
-| `PORT` | `3000` | HTTP server port |
+| `PORT` | `5000` | HTTP server port |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit sliding window (ms) |
+| `RATE_LIMIT_MAX_REQUESTS` | `60` | Max requests per window per client |
 
 **Setup:**
 
 ```bash
 cp .env.example .env
-# Edit .env with your Neo4j credentials
+# Edit .env with your Graph Engine URL
 ```
 
 ## API Reference
@@ -96,17 +184,23 @@ cp .env.example .env
 ```json
 {
   "status": "ok",
-  "neo4j": {
+  "provider": "graph-engine",
+  "graphApi": {
     "connected": true,
-    "services": 11
+    "status": "healthy",
+    "stale": false,
+    "lastUpdatedSecondsAgo": 12
   },
-  "uptime": 42.3
+  "config": {
+    "maxTraversalDepth": 2,
+    "defaultLatencyMetric": "p95"
+  },
+  "uptimeSeconds": 42.3
 }
 ```
 
 **Status Codes:**
-- `200 OK`: Service healthy
-- `500 Internal Server Error`: Service error
+- `200 OK`: Always (even when degraded)
 
 ---
 
@@ -155,28 +249,39 @@ Or, using name/namespace:
     "name": "checkoutservice",
     "namespace": "default"
   },
-  "depth": 2,
+  "neighborhood": {
+    "description": "k-hop upstream subgraph around target (not full graph)",
+    "serviceCount": 3,
+    "edgeCount": 2,
+    "depthUsed": 2,
+    "generatedAt": "2025-12-25T08:22:28.950Z"
+  },
   "affectedCallers": [
     {
       "serviceId": "default:frontend",
+      "name": "frontend",
+      "namespace": "default",
       "lostTrafficRps": 0.178,
       "edgeErrorRate": 0.0
     }
   ],
-  "criticalPathsBroken": [
+  "criticalPathsToTarget": [
     {
       "path": ["default:loadgenerator", "default:frontend", "default:checkoutservice"],
       "pathRps": 0.178
     }
-  ]
+  ],
+  "totalLostTrafficRps": 0.178
 }
 ```
 
 **Response Fields:**
 
+- `neighborhood`: Metadata about the k-hop upstream subgraph used for analysis
 - `affectedCallers`: Direct callers that lose traffic, sorted by `lostTrafficRps` descending
-- `criticalPathsBroken`: Top N paths by traffic volume that include the failed service
+- `criticalPathsToTarget`: Top N paths by traffic volume that include the failed service
 - `pathRps`: Bottleneck throughput (min edge rate along path)
+- `totalLostTrafficRps`: Sum of lost traffic across all affected callers
 
 **Status Codes:**
 - `200 OK`: Simulation successful
@@ -188,7 +293,7 @@ Or, using name/namespace:
 **Example:**
 
 ```bash
-curl -X POST http://localhost:3000/simulate/failure \
+curl -X POST http://localhost:5000/simulate/failure \
   -H "Content-Type: application/json" \
   -d '{"serviceId": "default:checkoutservice"}'
 ```
@@ -225,13 +330,15 @@ Simulates changing the pod count for a service and computes the impact on latenc
 | `name` | string | conditional* | Service name |
 | `namespace` | string | conditional* | Service namespace |
 | `currentPods` | number | **required** | Current pod count (positive integer) |
-| `newPods` | number | **required** | New pod count (positive integer) |
+| `newPods` | number | **required** | New pod count (positive integer). Aliases: `targetPods`, `pods` |
 | `latencyMetric` | string | optional | Latency metric (p50, p95, p99, default: p95) |
 | `model.type` | string | optional | Scaling model (bounded_sqrt, linear, default: bounded_sqrt) |
 | `model.alpha` | number | optional | Fixed overhead fraction (0.0-1.0, default: 0.5) |
 | `maxDepth` | number | optional | Traversal depth (1-3, default: 2) |
 
 *Either `serviceId` OR (`name` AND `namespace`) required.
+
+> **Parameter Aliases:** For convenience, `newPods` accepts aliases `targetPods` and `pods`. If multiple aliases are provided with conflicting values, the request returns 400.
 
 **Response:**
 
@@ -242,22 +349,39 @@ Simulates changing the pod count for a service and computes the impact on latenc
     "name": "frontend",
     "namespace": "default"
   },
-  "latencyMetric": "p95",
+  "scalingModel": {
+    "type": "bounded_sqrt",
+    "alpha": 0.5
+  },
+  "neighborhood": {
+    "description": "k-hop upstream subgraph around target (not full graph)",
+    "serviceCount": 2,
+    "edgeCount": 1,
+    "depthUsed": 2,
+    "generatedAt": "2025-12-25T08:22:28.950Z"
+  },
+  "latencyEstimate": {
+    "description": "Latency figures: baselineMs is current weighted mean, projectedMs is post-scaling estimate, unit is milliseconds",
+    "metric": "p95"
+  },
   "currentPods": 2,
   "newPods": 6,
   "affectedCallers": [
     {
       "serviceId": "default:loadgenerator",
-      "beforeMs": 34.67,
-      "afterMs": 24.89,
+      "name": "loadgenerator",
+      "namespace": "default",
+      "hopDistance": 1,
+      "baselineMs": 34.67,
+      "projectedMs": 24.89,
       "deltaMs": -9.78
     }
   ],
   "affectedPaths": [
     {
       "path": ["default:loadgenerator", "default:frontend"],
-      "beforeMs": 34.67,
-      "afterMs": 24.89,
+      "baselineMs": 34.67,
+      "projectedMs": 24.89,
       "deltaMs": -9.78
     }
   ]
@@ -266,8 +390,11 @@ Simulates changing the pod count for a service and computes the impact on latenc
 
 **Response Fields:**
 
-- `affectedCallers`: Callers with changed latency, sorted by absolute `deltaMs` descending
-- `beforeMs`, `afterMs`: Weighted mean latency (may be `null` if caller has zero traffic)
+- `neighborhood`: Metadata about the k-hop upstream subgraph used for analysis
+- `latencyEstimate`: Description and metric for latency values (all in milliseconds)
+- `affectedCallers`: ALL upstream nodes in neighborhood with latency impact, sorted by `|deltaMs|` descending
+- `hopDistance`: Minimum hop distance from caller to target (1 = direct, 2 = 2-hop, etc.)
+- `baselineMs`, `projectedMs`: Weighted mean latency before/after scaling (may be `null` if no traffic)
 - `deltaMs`: Latency change (negative = improvement)
 - `affectedPaths`: Top N paths by traffic with latency changes
 
@@ -281,7 +408,7 @@ Simulates changing the pod count for a service and computes the impact on latenc
 **Example:**
 
 ```bash
-curl -X POST http://localhost:3000/simulate/scale \
+curl -X POST http://localhost:5000/simulate/scale \
   -H "Content-Type: application/json" \
   -d '{
     "serviceId": "default:frontend",
@@ -289,6 +416,206 @@ curl -X POST http://localhost:3000/simulate/scale \
     "newPods": 6
   }'
 ```
+
+---
+
+### Risk Analysis
+
+**Endpoint:** `GET /risk/services/top`
+
+Returns the top services by centrality-based risk score. Services with higher centrality (PageRank or betweenness) are at higher risk of causing cascading failures.
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `metric` | string | `pagerank` | Centrality metric (`pagerank` or `betweenness`) |
+| `limit` | number | `5` | Number of services to return (1-20) |
+
+**Response:**
+
+```json
+{
+  "metric": "pagerank",
+  "services": [
+    {
+      "serviceId": "default:frontend",
+      "name": "frontend",
+      "score": 0.2847,
+      "riskLevel": "high",
+      "explanation": "frontend has high PageRank (0.2847), indicating it is a critical hub. Failure could cascade widely."
+    },
+    {
+      "serviceId": "default:checkoutservice",
+      "name": "checkoutservice",
+      "score": 0.1523,
+      "riskLevel": "medium",
+      "explanation": "checkoutservice has moderate PageRank (0.1523). Monitor for dependencies."
+    }
+  ],
+  "generatedAt": "2025-12-29T10:00:00.000Z"
+}
+```
+
+**Response Fields:**
+
+- `metric`: Centrality metric used for ranking
+- `services`: Top N services by centrality score, each with:
+  - `riskLevel`: `high` (top 20%), `medium` (20-50%), or `low` (bottom 50%)
+  - `explanation`: Human-readable risk explanation
+- `generatedAt`: Timestamp of analysis
+
+**Example:**
+
+```bash
+curl "http://localhost:5000/risk/services/top?metric=pagerank&limit=10"
+```
+
+---
+
+### Recommendations in Simulation Responses
+
+Both failure and scaling simulation responses now include actionable recommendations:
+
+**Failure Simulation Response (new field):**
+```json
+{
+  "target": { ... },
+  "affectedCallers": [ ... ],
+  "recommendations": [
+    {
+      "type": "circuit-breaker",
+      "priority": "high",
+      "message": "Consider implementing circuit breakers for callers losing >50 RPS."
+    },
+    {
+      "type": "redundancy",
+      "priority": "medium", 
+      "message": "3 callers depend on this service. Consider deploying replicas or fallback endpoints."
+    }
+  ]
+}
+```
+
+**Scaling Simulation Response (new field):**
+```json
+{
+  "target": { ... },
+  "latencyEstimate": { ... },
+  "recommendations": [
+    {
+      "type": "scaling-benefit",
+      "priority": "medium",
+      "message": "Scaling from 2 to 4 pods shows >30% latency improvement. Proceed if cost-effective."
+    }
+  ]
+}
+```
+
+**Recommendation Types:**
+
+| Type | Applies To | Description |
+|------|-----------|-------------|
+| `data-quality-warning` | Both | Low confidence due to stale/missing data |
+| `circuit-breaker` | Failure | High traffic loss suggests circuit breakers |
+| `redundancy` | Failure | Multiple callers suggest replication |
+| `topology-review` | Failure | Unreachable services detected |
+| `monitoring` | Failure | Low impact, but monitor affected callers |
+| `scaling-caution` | Scale | Scaling down increases latency significantly |
+| `scaling-benefit` | Scale | Scaling up provides >30% improvement |
+| `cost-efficiency` | Scale | Minimal benefit, may not justify cost |
+| `propagation-awareness` | Scale | Callers will see latency changes |
+| `proceed` | Scale | No significant impact detected |
+
+---
+
+## Operational Features
+
+### Correlation ID
+
+All requests are assigned a unique correlation ID for distributed tracing:
+
+- **Header:** `X-Correlation-Id`
+- If provided in the request, it is preserved; otherwise, a UUID is generated
+- All log entries include the correlation ID for request tracing
+
+**Example:**
+```bash
+curl -H "X-Correlation-Id: my-trace-123" http://localhost:5000/health
+# Response includes: X-Correlation-Id: my-trace-123
+```
+
+### Rate Limiting
+
+Simulation endpoints (`POST /simulate/*`) are rate-limited to prevent abuse:
+
+- **Default:** 60 requests per minute per client IP
+- **Headers returned:**
+  - `X-RateLimit-Limit`: Maximum requests per window
+  - `X-RateLimit-Remaining`: Remaining requests in current window
+  - `X-RateLimit-Reset`: Unix timestamp when window resets
+
+**Rate Limit Exceeded (HTTP 429):**
+```json
+{
+  "error": "Too many requests",
+  "retryAfterMs": 45000
+}
+```
+
+### Structured Logging
+
+All logs are output in JSON format for easy parsing:
+
+```json
+{
+  "timestamp": "2025-12-29T10:00:00.000Z",
+  "level": "info",
+  "message": "request_start",
+  "correlationId": "abc-123",
+  "method": "POST",
+  "path": "/simulate/failure"
+}
+```
+
+---
+
+## Evaluation Harness
+
+CLI tools for evaluating simulation accuracy against ground truth:
+
+### Run Scenarios
+
+```bash
+node tools/eval/run.js \
+  --scenarios tools/eval/scenarios.sample.json \
+  --output predictions.json \
+  --base-url http://localhost:5000
+```
+
+**Scenario Format:**
+```json
+[
+  {
+    "id": "scenario-1",
+    "type": "failure",
+    "request": { "serviceId": "default:frontend" }
+  }
+]
+```
+
+### Score Predictions
+
+```bash
+node tools/eval/score.js \
+  --predictions predictions.json \
+  --ground-truth tools/eval/groundTruth.sample.json
+```
+
+**Metrics Computed:**
+- **MAE** (Mean Absolute Error)
+- **MAPE** (Mean Absolute Percentage Error)
+- **Spearman ρ** (rank correlation, if N ≥ 2)
 
 ---
 
@@ -381,7 +708,7 @@ newLatency = baseLatency * (currentPods / newPods)
 **Request:**
 
 ```bash
-curl -X POST http://localhost:3000/simulate/failure \
+curl -X POST http://localhost:5000/simulate/failure \
   -H "Content-Type: application/json" \
   -d '{
     "serviceId": "default:checkoutservice",
@@ -429,7 +756,7 @@ curl -X POST http://localhost:3000/simulate/failure \
 **Request:**
 
 ```bash
-curl -X POST http://localhost:3000/simulate/scale \
+curl -X POST http://localhost:5000/simulate/scale \
   -H "Content-Type: application/json" \
   -d '{
     "serviceId": "default:frontend",
@@ -481,8 +808,8 @@ curl -X POST http://localhost:3000/simulate/scale \
 
 ### Prerequisites
 
-- Node.js >= 14.x
-- Neo4j database (populated by `service-graph-engine`)
+- Node.js >= 18.x
+- Access to `service-graph-engine` HTTP API
 
 ### Installation
 
@@ -494,7 +821,7 @@ npm install
 
 ```bash
 cp .env.example .env
-# Edit .env with your Neo4j credentials
+# Edit .env with your Graph Engine URL (default: http://service-graph-engine:3000)
 ```
 
 ### Start Server
@@ -506,8 +833,8 @@ npm start
 **Output:**
 
 ```
-[2025-12-25T10:00:00.000Z] What-if Simulation Engine started
-Port: 3000
+[2025-12-25T10:00:00.000Z] Predictive Analysis Engine started
+Port: 5000
 Max traversal depth: 2
 Default latency metric: p95
 Scaling model: bounded_sqrt (alpha: 0.5)
@@ -517,7 +844,7 @@ Timeout: 8000ms
 ### Verify Deployment
 
 ```bash
-curl http://localhost:3000/health
+curl http://localhost:5000/health
 ```
 
 **Expected Response:**
@@ -525,11 +852,12 @@ curl http://localhost:3000/health
 ```json
 {
   "status": "ok",
-  "neo4j": {
+  "provider": "graph-engine",
+  "graphApi": {
     "connected": true,
-    "services": 11
+    "status": "healthy"
   },
-  "uptime": 5.2
+  "uptimeSeconds": 5.2
 }
 ```
 
@@ -547,10 +875,10 @@ npm test
 
 ## Security Considerations
 
-1. **Credential Management**: Neo4j password is never logged (redacted in all error messages)
-2. **Read-Only Access**: All Neo4j queries use `READ` access mode
-3. **Input Validation**: All user inputs validated before use
-4. **Timeout Protection**: Prevents resource exhaustion from expensive queries
+1. **HTTP Only**: All data access via Graph Engine HTTP API (no direct database access)
+2. **Input Validation**: All user inputs validated before use
+3. **Timeout Protection**: Prevents resource exhaustion from expensive Graph Engine queries
+4. **Rate Limiting**: Simulation endpoints protected against abuse
 
 ---
 
@@ -576,14 +904,16 @@ npm test
 
 ### With service-graph-engine
 
-- **Dependency**: Reads same Neo4j graph (Services + CALLS_NOW edges)
-- **Schema**: Assumes schema managed by `service-graph-engine`
-- **No coordination required**: Both services are read-only consumers
+- **Dependency**: Consumes Graph Engine HTTP API for topology and metrics
+- **Endpoints Used**:
+  - `GET /graph/health` - Data freshness status
+  - `GET /services/{name}/neighborhood?k={depth}` - k-hop neighborhood
+- **No coordination required**: Graph Engine provides read-only data access
 
 ### With Other Components
 
-- **REST API**: Standard HTTP JSON (no authentication in Progress 1)
-- **Service Identifier**: Accepts both `serviceId` and `name`+`namespace` formats
+- **REST API**: Standard HTTP JSON (no authentication in current version)
+- **Service Identifier**: Accepts plain service names (e.g., "frontend")
 - **Extensible**: Response format includes detailed metadata for downstream processing
 
 ---
@@ -592,12 +922,12 @@ npm test
 
 ### Error: "Service not found"
 
-**Cause:** Target service does not exist in Neo4j graph
+**Cause:** Target service does not exist in Graph Engine
 
 **Solution:** Verify service exists:
 
 ```bash
-curl -X POST http://localhost:3000/simulate/failure \
+curl -X POST http://localhost:5000/simulate/failure \
   -H "Content-Type: application/json" \
   -d '{"serviceId": "default:frontend"}'
 ```
@@ -613,19 +943,42 @@ Check `/health` endpoint for service count.
 **Solution:**
 1. Reduce `maxDepth` in request (try 1 instead of 2)
 2. Increase `TIMEOUT_MS` in `.env` (if graph is legitimately large)
+3. Check Graph Engine performance
 
 ---
 
-### Error: "Neo4j connection failed"
+### Error: "Graph API unavailable"
 
-**Cause:** Invalid credentials or unreachable database
+**Cause:** Cannot reach Graph Engine or it returned an error
 
-**Solution:** Verify Neo4j credentials in `.env`:
+**Solution:** 
+1. Verify Graph Engine is running: `curl http://service-graph-engine:3000/health`
+2. Check `SERVICE_GRAPH_ENGINE_URL` in `.env`
+3. Review Graph Engine logs
 
-```bash
-# Test connection
-node verify-schema.js
-```
+---
+
+## Copilot Integration
+
+This repository includes extensive GitHub Copilot customization for AI-assisted development:
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **Custom Agents** | `.github/agents/` | Planner, Implementer, Reviewer personas |
+| **Instruction Files** | `.github/instructions/` | Path-specific coding rules (6 files) |
+| **Agent Skills** | `.github/skills/` | Specialized knowledge modules (4 skills) |
+| **Prompt Templates** | `.github/prompts/` | Reusable workflow prompts (7 files) |
+
+**Key workflow:**
+1. Select **Planner** from agent dropdown → Describe your task
+2. Review the plan, ask questions
+3. Type `OK IMPLEMENT NOW` to approve
+4. Select **Implementer** → Execute the plan
+5. Select **Reviewer** → Validate changes
+
+For complete documentation, see:
+- [AGENTS.md](AGENTS.md) — Universal agent instructions
+- [docs/COPILOT-USAGE-GUIDE.md](docs/COPILOT-USAGE-GUIDE.md) — Detailed usage guide
 
 ---
 

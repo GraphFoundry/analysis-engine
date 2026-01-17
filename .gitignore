@@ -1,6 +1,7 @@
 # Binaries
 predictive-analysis-engine
 server_bin
+server
 *.exe
 *.exe~
 *.dll
@@ -20,3 +21,6 @@ server_bin
 # IDEs
 .vscode/
 .idea/
+
+# SQLite
+data/*.db*

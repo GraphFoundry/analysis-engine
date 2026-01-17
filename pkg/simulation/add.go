@@ -148,9 +148,7 @@ func SimulateAddService(ctx context.Context, client *graph.Client, req AddSimula
 
 		reason := ""
 		if !nc.CanFit {
-			if cpuFit < 1 && ramFit < 1 {
-				reason = "Insufficient CPU and RAM"
-			} else if cpuFit < 1 {
+			if cpuFit < 1 {
 				reason = "Insufficient CPU"
 			} else if ramFit < 1 {
 				reason = "Insufficient RAM"

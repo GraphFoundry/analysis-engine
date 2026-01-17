@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -50,7 +51,7 @@ func (c *Client) GetServices(ctx context.Context) ([]ServiceInfo, error) {
 }
 
 func (c *Client) GetNeighborhood(ctx context.Context, serviceName string, k int) (*NeighborhoodResponse, error) {
-	path := fmt.Sprintf("/services/%s/neighborhood?k=%d", serviceName, k)
+	path := fmt.Sprintf("/services/%s/neighborhood?k=%d", url.PathEscape(serviceName), k)
 	var resp NeighborhoodResponse
 	if err := c.get(ctx, path, &resp); err != nil {
 		return nil, err

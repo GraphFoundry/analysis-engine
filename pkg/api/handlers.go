@@ -122,7 +122,7 @@ func (h *Handler) ServicesHandler(w http.ResponseWriter, r *http.Request) {
 	if sRes.err != nil {
 		logger.Error("Failed to fetch services", sRes.err)
 		respondJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
-			"error":                 sRes.err.Error(),
+			"error":                 "Failed to fetch services from Graph Engine",
 			"services":              []interface{}{},
 			"count":                 0,
 			"stale":                 true,
@@ -250,6 +250,11 @@ func (h *Handler) SimulateAddHandler(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.SimulationService.RunAddSimulation(r.Context(), req)
 	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "request failed") {
+			respondError(w, http.StatusInternalServerError, "Failed to fetch cluster state: ")
+			return
+		}
 		handleSimulationError(w, err)
 		return
 	}
@@ -265,6 +270,10 @@ func handleSimulationError(w http.ResponseWriter, err error) {
 	}
 	if strings.Contains(errMsg, "maxDepth") || strings.Contains(errMsg, "must be") || strings.Contains(errMsg, "Invalid") {
 		respondError(w, http.StatusBadRequest, errMsg)
+		return
+	}
+	if strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "request failed") {
+		respondError(w, http.StatusServiceUnavailable, "Graph API unavailable: ")
 		return
 	}
 

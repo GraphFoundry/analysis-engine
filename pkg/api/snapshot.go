@@ -100,7 +100,7 @@ func (h *Handler) DependencyGraphHandler(w http.ResponseWriter, r *http.Request)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": snapshotErr.Error(),
+			"error": "Failed to fetch graph snapshot from Graph Engine",
 			"nodes": []interface{}{},
 			"edges": []interface{}{},
 			"metadata": map[string]interface{}{

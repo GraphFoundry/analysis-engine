@@ -1,0 +1,1027 @@
+components:
+  schemas:
+    api.GraphSnapshotResponse:
+      properties:
+        edges:
+          items:
+            $ref: '#/components/schemas/api.SnapshotEdge'
+          type: array
+          uniqueItems: false
+        metadata:
+          $ref: '#/components/schemas/api.SnapshotMetadata'
+        nodes:
+          items:
+            $ref: '#/components/schemas/api.SnapshotNode'
+          type: array
+          uniqueItems: false
+      type: object
+    api.SnapshotEdge:
+      properties:
+        id:
+          type: string
+        latencyP95Ms:
+          type: number
+        reqRate:
+          type: number
+        source:
+          type: string
+        target:
+          type: string
+      type: object
+    api.SnapshotMetadata:
+      properties:
+        edgeCount:
+          type: integer
+        edgesWithMetrics:
+          type: integer
+        generatedAt:
+          type: string
+        lastUpdatedSecondsAgo:
+          type: integer
+        nodeCount:
+          type: integer
+        nodesWithMetrics:
+          type: integer
+        stale:
+          type: boolean
+        windowMinutes:
+          type: integer
+      type: object
+    api.SnapshotNode:
+      properties:
+        availability:
+          type: number
+        availabilityPct:
+          type: number
+        betweenness:
+          type: number
+        errorRatePct:
+          type: number
+        id:
+          type: string
+        latencyP95Ms:
+          type: number
+        name:
+          type: string
+        namespace:
+          type: string
+        pageRank:
+          type: number
+        podCount:
+          type: integer
+        reqRate:
+          type: number
+        riskLevel:
+          type: string
+        riskReason:
+          type: string
+        updatedAt:
+          type: string
+      type: object
+    graph.CentralityServiceInfo:
+      properties:
+        centralityScore:
+          type: number
+        explanation:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+        riskLevel:
+          type: string
+        serviceId:
+          type: string
+      type: object
+    graph.DataFreshness:
+      properties:
+        lastUpdatedSecondsAgo:
+          type: integer
+        source:
+          type: string
+        stale:
+          type: boolean
+        windowMinutes:
+          type: integer
+      type: object
+    graph.TopCentralityResponse:
+      properties:
+        confidence:
+          type: string
+        dataFreshness:
+          $ref: '#/components/schemas/graph.DataFreshness'
+        metric:
+          type: string
+        services:
+          items:
+            $ref: '#/components/schemas/graph.CentralityServiceInfo'
+          type: array
+          uniqueItems: false
+      type: object
+    simulation.AddRiskAnalysis:
+      properties:
+        dependencyRisk:
+          type: string
+        description:
+          type: string
+      type: object
+    simulation.AddSimulationRequest:
+      properties:
+        cpuRequest:
+          type: number
+        dependencies:
+          items:
+            $ref: '#/components/schemas/simulation.DependencyRef'
+          type: array
+          uniqueItems: false
+        ramRequest:
+          type: integer
+        replicas:
+          type: integer
+        serviceName:
+          type: string
+        timeWindow:
+          type: string
+      type: object
+    simulation.AddSimulationResult:
+      properties:
+        confidence:
+          type: string
+        explanation:
+          type: string
+        recommendation:
+          $ref: '#/components/schemas/simulation.LegacyRecommendation'
+        recommendations:
+          items:
+            $ref: '#/components/schemas/simulation.FailureRecommendation'
+          type: array
+          uniqueItems: false
+        riskAnalysis:
+          $ref: '#/components/schemas/simulation.AddRiskAnalysis'
+        success:
+          type: boolean
+        suitableNodes:
+          items:
+            $ref: '#/components/schemas/simulation.NodeCapacity'
+          type: array
+          uniqueItems: false
+        targetServiceName:
+          type: string
+        totalCapacityPods:
+          type: integer
+      type: object
+    simulation.AffectedCaller:
+      properties:
+        edgeErrorRate:
+          type: number
+        lostTrafficRps:
+          type: number
+        name:
+          type: string
+        namespace:
+          type: string
+        serviceId:
+          type: string
+      type: object
+    simulation.AffectedCallerScaling:
+      properties:
+        afterMs:
+          type: number
+        beforeMs:
+          type: number
+        deltaMs:
+          type: number
+        endToEndAfterMs:
+          type: number
+        endToEndBeforeMs:
+          type: number
+        endToEndDeltaMs:
+          type: number
+        hopDistance:
+          type: integer
+        name:
+          type: string
+        namespace:
+          type: string
+        serviceId:
+          type: string
+        viaPath:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+      type: object
+    simulation.AffectedCallersList:
+      properties:
+        description:
+          type: string
+        items:
+          items:
+            $ref: '#/components/schemas/simulation.AffectedCallerScaling'
+          type: array
+          uniqueItems: false
+      type: object
+    simulation.AffectedDownstream:
+      properties:
+        edgeErrorRate:
+          type: number
+        lostTrafficRps:
+          type: number
+        name:
+          type: string
+        namespace:
+          type: string
+        serviceId:
+          type: string
+      type: object
+    simulation.AffectedPathScaling:
+      properties:
+        afterMs:
+          type: number
+        beforeMs:
+          type: number
+        deltaMs:
+          type: number
+        incompleteData:
+          type: boolean
+        path:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        pathRps:
+          type: number
+      type: object
+    simulation.BrokenPath:
+      properties:
+        path:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        pathRps:
+          type: number
+      type: object
+    simulation.DataFreshness:
+      properties:
+        lastUpdatedSecondsAgo:
+          type: integer
+        source:
+          type: string
+        stale:
+          type: boolean
+        windowMinutes:
+          type: integer
+      type: object
+    simulation.DependencyRef:
+      properties:
+        serviceId:
+          type: string
+      type: object
+    simulation.FailureRecommendation:
+      properties:
+        action:
+          type: string
+        description:
+          type: string
+        priority:
+          type: string
+        reason:
+          type: string
+        target:
+          type: string
+        type:
+          type: string
+      type: object
+    simulation.FailureSimulationRequest:
+      properties:
+        depth:
+          type: integer
+        serviceId:
+          type: string
+      type: object
+    simulation.FailureSimulationResult:
+      properties:
+        affectedCallers:
+          items:
+            $ref: '#/components/schemas/simulation.AffectedCaller'
+          type: array
+          uniqueItems: false
+        affectedDownstream:
+          items:
+            $ref: '#/components/schemas/simulation.AffectedDownstream'
+          type: array
+          uniqueItems: false
+        confidence:
+          type: string
+        criticalPathsToTarget:
+          items:
+            $ref: '#/components/schemas/simulation.BrokenPath'
+          type: array
+          uniqueItems: false
+        dataFreshness:
+          $ref: '#/components/schemas/simulation.DataFreshness'
+        explanation:
+          type: string
+        neighborhood:
+          $ref: '#/components/schemas/simulation.NeighborhoodMeta'
+        recommendations:
+          items:
+            $ref: '#/components/schemas/simulation.FailureRecommendation'
+          type: array
+          uniqueItems: false
+        target:
+          $ref: '#/components/schemas/simulation.ServiceRef'
+        totalLostTrafficRps:
+          type: number
+        unreachableServices:
+          items:
+            $ref: '#/components/schemas/simulation.UnreachableService'
+          type: array
+          uniqueItems: false
+      type: object
+    simulation.LegacyRecommendation:
+      properties:
+        cpuRequest:
+          type: number
+        distribution:
+          items:
+            $ref: '#/components/schemas/simulation.PlacementDistribution'
+          type: array
+          uniqueItems: false
+        ramRequest:
+          type: integer
+        serviceName:
+          type: string
+      type: object
+    simulation.NeighborhoodMeta:
+      properties:
+        depthUsed:
+          type: integer
+        description:
+          type: string
+        edgeCount:
+          type: integer
+        generatedAt:
+          type: string
+        serviceCount:
+          type: integer
+      type: object
+    simulation.NodeCapacity:
+      properties:
+        availableCpu:
+          type: number
+        availableRam:
+          type: number
+        canFit:
+          type: boolean
+        cpuAvailable:
+          type: number
+        cpuTotal:
+          type: number
+        maxPods:
+          type: integer
+        node:
+          type: string
+        nodeName:
+          type: string
+        ramAvailableMB:
+          type: number
+        ramTotalMB:
+          type: number
+        reason:
+          type: string
+        score:
+          type: integer
+        suitable:
+          type: boolean
+      type: object
+    simulation.PlacementDistribution:
+      properties:
+        node:
+          type: string
+        replicas:
+          type: integer
+      type: object
+    simulation.ScalingLatencyEstimate:
+      properties:
+        baselineMs:
+          type: number
+        deltaMs:
+          type: number
+        description:
+          type: string
+        projectedMs:
+          type: number
+        unit:
+          type: string
+      type: object
+    simulation.ScalingModel:
+      properties:
+        alpha:
+          type: number
+        type:
+          type: string
+      type: object
+    simulation.ScalingSimulationRequest:
+      properties:
+        currentPods:
+          type: integer
+        latencyMetric:
+          type: string
+        maxDepth:
+          type: integer
+        model:
+          $ref: '#/components/schemas/simulation.ScalingModel'
+        newPods:
+          type: integer
+        serviceId:
+          type: string
+        timeWindow:
+          type: string
+      type: object
+    simulation.ScalingSimulationResult:
+      properties:
+        affectedCallers:
+          $ref: '#/components/schemas/simulation.AffectedCallersList'
+        affectedPaths:
+          items:
+            $ref: '#/components/schemas/simulation.AffectedPathScaling'
+          type: array
+          uniqueItems: false
+        confidence:
+          type: string
+        currentPods:
+          type: integer
+        dataFreshness:
+          $ref: '#/components/schemas/simulation.DataFreshness'
+        explanation:
+          type: string
+        latencyEstimate:
+          $ref: '#/components/schemas/simulation.ScalingLatencyEstimate'
+        latencyMetric:
+          type: string
+        neighborhood:
+          $ref: '#/components/schemas/simulation.NeighborhoodMeta'
+        newPods:
+          type: integer
+        recommendations:
+          items:
+            $ref: '#/components/schemas/simulation.FailureRecommendation'
+          type: array
+          uniqueItems: false
+        scalingDirection:
+          type: string
+        scalingModel:
+          $ref: '#/components/schemas/simulation.ScalingModel'
+        target:
+          $ref: '#/components/schemas/simulation.ServiceRef'
+        warnings:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+      type: object
+    simulation.ServiceRef:
+      properties:
+        name:
+          type: string
+        namespace:
+          type: string
+        serviceId:
+          type: string
+      type: object
+    simulation.UnreachableService:
+      properties:
+        lostFromReachableCutsRps:
+          type: number
+        lostFromTargetRps:
+          type: number
+        lostTrafficRps:
+          type: number
+        name:
+          type: string
+        namespace:
+          type: string
+        serviceId:
+          type: string
+      type: object
+    storage.LogDecisionInput:
+      properties:
+        correlationId:
+          type: string
+        result: {}
+        scenario: {}
+        timestamp:
+          type: string
+        type:
+          type: string
+      type: object
+externalDocs:
+  description: ""
+  url: ""
+info:
+  contact:
+    email: support@example.com
+    name: API Support
+  description: API for the Predictive Analysis Engine, responsible for failure simulation,
+    scaling analysis, and risk assessment.
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: http://swagger.io/terms/
+  title: Predictive Analysis Engine API
+  version: "1.0"
+openapi: 3.1.0
+paths:
+  /decisions/history:
+    get:
+      description: Retrieves a history of logged decisions with pagination
+      parameters:
+      - description: Limit number of records
+        in: query
+        name: limit
+        schema:
+          default: 50
+          type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        schema:
+          default: 0
+          type: integer
+      - description: Filter by decision type
+        in: query
+        name: type
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Service Unavailable
+      summary: Get Decision History
+      tags:
+      - decisions
+  /decisions/log:
+    post:
+      description: Logs a decision made by the system or a user
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/storage.LogDecisionInput'
+                description: Decision details
+                summary: request
+        description: Decision details
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Service Unavailable
+      summary: Log a Decision
+      tags:
+      - decisions
+  /dependency-graph/snapshot:
+    get:
+      description: Fetches the current dependency graph snapshot with optional filtering
+        by namespace
+      parameters:
+      - description: Filter by namespace
+        in: query
+        name: namespace
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.GraphSnapshotResponse'
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Service Unavailable
+      summary: Get Dependency Graph Snapshot
+      tags:
+      - graph
+  /health:
+    get:
+      description: Checks if the API and connections to the Graph Engine are healthy
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+      summary: Check API Health
+      tags:
+      - system
+  /risk/services/top:
+    get:
+      description: Returns services ordered by risk metrics (pagerank or betweenness)
+      parameters:
+      - description: Risk metric (pagerank, betweenness)
+        in: query
+        name: metric
+        schema:
+          default: pagerank
+          type: string
+      - description: Number of services to return (1-20)
+        in: query
+        name: limit
+        schema:
+          default: 5
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/graph.TopCentralityResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Service Unavailable
+      summary: Get Top Risky Services
+      tags:
+      - risk
+  /services:
+    get:
+      description: Fetches a list of services and their status from the Graph Engine
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Service Unavailable
+      summary: List Services
+      tags:
+      - services
+  /simulate/add:
+    post:
+      description: Simulates adding a new service to the cluster (capacity planning)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/simulation.AddSimulationRequest'
+                description: Simulation parameters
+                summary: request
+        description: Simulation parameters
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/simulation.AddSimulationResult'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Internal Server Error
+      summary: Simulate Adding Service
+      tags:
+      - simulation
+  /simulate/failure:
+    post:
+      description: Simulates a failure of a specific service and analyzes the impact
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/simulation.FailureSimulationRequest'
+                description: Simulation parameters
+                summary: request
+        description: Simulation parameters
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/simulation.FailureSimulationResult'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Service Unavailable
+      summary: Simulate Service Failure
+      tags:
+      - simulation
+  /simulate/scale:
+    post:
+      description: Simulates scaling a service and analyzes latency impact
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/simulation.ScalingSimulationRequest'
+                description: Simulation parameters
+                summary: request
+        description: Simulation parameters
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/simulation.ScalingSimulationResult'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Service Unavailable
+      summary: Simulate Scaling
+      tags:
+      - simulation
+  /telemetry/edges:
+    get:
+      description: Fetches telemetry metrics for edges between services
+      parameters:
+      - description: Source service name
+        in: query
+        name: fromService
+        schema:
+          type: string
+      - description: Target service name
+        in: query
+        name: toService
+        schema:
+          type: string
+      - description: Start timestamp (ISO 8601)
+        in: query
+        name: from
+        required: true
+        schema:
+          type: string
+      - description: End timestamp (ISO 8601)
+        in: query
+        name: to
+        required: true
+        schema:
+          type: string
+      - description: Step size in seconds
+        in: query
+        name: step
+        schema:
+          default: 60
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Service Unavailable
+      summary: Get Edge Metrics
+      tags:
+      - telemetry
+  /telemetry/service:
+    get:
+      description: Fetches telemetry metrics for a specific service or all services
+      parameters:
+      - description: Service name
+        in: query
+        name: service
+        schema:
+          type: string
+      - description: Start timestamp (ISO 8601)
+        in: query
+        name: from
+        required: true
+        schema:
+          type: string
+      - description: End timestamp (ISO 8601)
+        in: query
+        name: to
+        required: true
+        schema:
+          type: string
+      - description: Step size in seconds
+        in: query
+        name: step
+        schema:
+          default: 60
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Service Unavailable
+      summary: Get Service Metrics
+      tags:
+      - telemetry

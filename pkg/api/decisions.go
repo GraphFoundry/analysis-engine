@@ -20,6 +20,18 @@ func (h *DecisionsHandler) RegisterRoutes(r *chi.Mux) {
 	r.Get("/decisions/history", h.GetHistory)
 }
 
+// LogDecision godoc
+// @Summary Log a Decision
+// @Description Logs a decision made by the system or a user
+// @Tags decisions
+// @Accept json
+// @Produce json
+// @Param request body storage.LogDecisionInput true "Decision details"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 503 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /decisions/log [post]
 func (h *DecisionsHandler) LogDecision(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
@@ -71,6 +83,18 @@ func (h *DecisionsHandler) LogDecision(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// GetHistory godoc
+// @Summary Get Decision History
+// @Description Retrieves a history of logged decisions with pagination
+// @Tags decisions
+// @Produce json
+// @Param limit query int false "Limit number of records" default(50)
+// @Param offset query int false "Offset for pagination" default(0)
+// @Param type query string false "Filter by decision type"
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Failure 503 {object} map[string]string
+// @Router /decisions/history [get]
 func (h *DecisionsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	if h.Store == nil {
 		http.Error(w, `{"error": "Decision store not available. Check SQLite configuration."}`, 503)

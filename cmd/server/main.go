@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/joho/godotenv"
+	httpSwagger "github.com/swaggo/http-swagger/v2"
 
 	"predictive-analysis-engine/pkg/api"
 	"predictive-analysis-engine/pkg/clients/graph"
@@ -21,6 +22,17 @@ import (
 	"predictive-analysis-engine/pkg/storage"
 	"predictive-analysis-engine/pkg/worker"
 )
+
+// @title Predictive Analysis Engine API
+// @version 1.0
+// @description API for the Predictive Analysis Engine, responsible for failure simulation, scaling analysis, and risk assessment.
+// @termsOfService http://swagger.io/terms/
+
+// @contact.name API Support
+// @contact.email support@example.com
+
+// @license.name Apache 2.0
+// @license.url http://www.apache.org/licenses/LICENSE-2.0.html
 
 func main() {
 
@@ -60,13 +72,20 @@ func main() {
 
 	r.Use(api.CorrelationMiddleware)
 
+	// Swagger UI
+	r.Get("/swagger/doc.json", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "docs/swagger.json")
+	})
+	r.Get("/swagger/*", httpSwagger.Handler(
+		httpSwagger.URL("doc.json"), // The url pointing to API definition
+	))
+
 	r.Get("/health", apiHandler.HealthHandler)
 	r.Get("/services", apiHandler.ServicesHandler)
 	r.Get("/risk/services/top", apiHandler.TopRiskHandler)
 	r.Post("/simulate/failure", apiHandler.SimulateFailureHandler)
 	r.Post("/simulate/scale", apiHandler.SimulateScalingHandler)
 	r.Post("/simulate/add", apiHandler.SimulateAddHandler)
-	r.Get("/dependency-graph/snapshot", apiHandler.DependencyGraphHandler)
 	r.Get("/dependency-graph/snapshot", apiHandler.DependencyGraphHandler)
 
 	decisionsHandler.RegisterRoutes(r)

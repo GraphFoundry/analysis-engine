@@ -27,6 +27,20 @@ func (h *TelemetryHandler) Routes() chi.Router {
 	return r
 }
 
+// GetServiceMetrics godoc
+// @Summary Get Service Metrics
+// @Description Fetches telemetry metrics for a specific service or all services
+// @Tags telemetry
+// @Produce json
+// @Param service query string false "Service name"
+// @Param from query string true "Start timestamp (ISO 8601)"
+// @Param to query string true "End timestamp (ISO 8601)"
+// @Param step query int false "Step size in seconds" default(60)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 503 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /telemetry/service [get]
 func (h *TelemetryHandler) GetServiceMetrics(w http.ResponseWriter, r *http.Request) {
 	enabled, reason := h.Client.CheckStatus()
 	if !enabled {
@@ -90,6 +104,21 @@ func (h *TelemetryHandler) GetServiceMetrics(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(resp)
 }
 
+// GetEdgeMetrics godoc
+// @Summary Get Edge Metrics
+// @Description Fetches telemetry metrics for edges between services
+// @Tags telemetry
+// @Produce json
+// @Param fromService query string false "Source service name"
+// @Param toService query string false "Target service name"
+// @Param from query string true "Start timestamp (ISO 8601)"
+// @Param to query string true "End timestamp (ISO 8601)"
+// @Param step query int false "Step size in seconds" default(60)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 503 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /telemetry/edges [get]
 func (h *TelemetryHandler) GetEdgeMetrics(w http.ResponseWriter, r *http.Request) {
 	enabled, reason := h.Client.CheckStatus()
 	if !enabled {

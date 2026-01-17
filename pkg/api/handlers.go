@@ -30,6 +30,13 @@ func NewHandler(cfg *config.Config, graphClient *graph.Client, simService *simul
 	}
 }
 
+// HealthHandler godoc
+// @Summary Check API Health
+// @Description Checks if the API and connections to the Graph Engine are healthy
+// @Tags system
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /health [get]
 func (h *Handler) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	uptimeSeconds := time.Since(h.StartTime).Seconds()
 
@@ -81,6 +88,14 @@ func (h *Handler) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, resp)
 }
 
+// ServicesHandler godoc
+// @Summary List Services
+// @Description Fetches a list of services and their status from the Graph Engine
+// @Tags services
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 503 {object} map[string]string
+// @Router /services [get]
 func (h *Handler) ServicesHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -164,6 +179,18 @@ func (h *Handler) ServicesHandler(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, resp)
 }
 
+// TopRiskHandler godoc
+// @Summary Get Top Risky Services
+// @Description Returns services ordered by risk metrics (pagerank or betweenness)
+// @Tags risk
+// @Produce json
+// @Param metric query string false "Risk metric (pagerank, betweenness)" default(pagerank)
+// @Param limit query int false "Number of services to return (1-20)" default(5)
+// @Success 200 {object} graph.TopCentralityResponse
+// @Failure 400 {object} map[string]string
+// @Failure 503 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /risk/services/top [get]
 func (h *Handler) TopRiskHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -209,6 +236,19 @@ func (h *Handler) TopRiskHandler(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, result)
 }
 
+// SimulateFailureHandler godoc
+// @Summary Simulate Service Failure
+// @Description Simulates a failure of a specific service and analyzes the impact
+// @Tags simulation
+// @Accept json
+// @Produce json
+// @Param request body simulation.FailureSimulationRequest true "Simulation parameters"
+// @Success 200 {object} simulation.FailureSimulationResult
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 503 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /simulate/failure [post]
 func (h *Handler) SimulateFailureHandler(w http.ResponseWriter, r *http.Request) {
 	var req simulation.FailureSimulationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -225,6 +265,19 @@ func (h *Handler) SimulateFailureHandler(w http.ResponseWriter, r *http.Request)
 	respondJSON(w, http.StatusOK, result)
 }
 
+// SimulateScalingHandler godoc
+// @Summary Simulate Scaling
+// @Description Simulates scaling a service and analyzes latency impact
+// @Tags simulation
+// @Accept json
+// @Produce json
+// @Param request body simulation.ScalingSimulationRequest true "Simulation parameters"
+// @Success 200 {object} simulation.ScalingSimulationResult
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 503 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /simulate/scale [post]
 func (h *Handler) SimulateScalingHandler(w http.ResponseWriter, r *http.Request) {
 	var req simulation.ScalingSimulationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -241,6 +294,17 @@ func (h *Handler) SimulateScalingHandler(w http.ResponseWriter, r *http.Request)
 	respondJSON(w, http.StatusOK, result)
 }
 
+// SimulateAddHandler godoc
+// @Summary Simulate Adding Service
+// @Description Simulates adding a new service to the cluster (capacity planning)
+// @Tags simulation
+// @Accept json
+// @Produce json
+// @Param request body simulation.AddSimulationRequest true "Simulation parameters"
+// @Success 200 {object} simulation.AddSimulationResult
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /simulate/add [post]
 func (h *Handler) SimulateAddHandler(w http.ResponseWriter, r *http.Request) {
 	var req simulation.AddSimulationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

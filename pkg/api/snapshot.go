@@ -52,6 +52,15 @@ type SnapshotMetadata struct {
 	GeneratedAt           string `json:"generatedAt"`
 }
 
+// DependencyGraphHandler godoc
+// @Summary Get Dependency Graph Snapshot
+// @Description Fetches the current dependency graph snapshot with optional filtering by namespace
+// @Tags graph
+// @Produce json
+// @Param namespace query string false "Filter by namespace"
+// @Success 200 {object} GraphSnapshotResponse
+// @Failure 503 {object} map[string]interface{}
+// @Router /dependency-graph/snapshot [get]
 func (h *Handler) DependencyGraphHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	namespace := r.URL.Query().Get("namespace")

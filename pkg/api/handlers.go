@@ -244,7 +244,12 @@ func (h *Handler) SimulateScalingHandler(w http.ResponseWriter, r *http.Request)
 func (h *Handler) SimulateAddHandler(w http.ResponseWriter, r *http.Request) {
 	var req simulation.AddSimulationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid request body")
+		logger.Error("Invalid request body", err)
+		respondError(w, http.StatusInternalServerError, "Invalid request body")
+		return
+	}
+	if req.CPURequest <= 0 || req.RAMRequest <= 0 || req.Replicas <= 0 {
+		respondError(w, http.StatusInternalServerError, "Invalid resource requests: cpu, ram, and replicas must be positive")
 		return
 	}
 
@@ -274,6 +279,10 @@ func handleSimulationError(w http.ResponseWriter, err error) {
 	}
 	if strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "request failed") {
 		respondError(w, http.StatusServiceUnavailable, "Graph API unavailable: ")
+		return
+	}
+	if strings.Contains(errMsg, "No nodes found") {
+		respondError(w, http.StatusInternalServerError, errMsg)
 		return
 	}
 

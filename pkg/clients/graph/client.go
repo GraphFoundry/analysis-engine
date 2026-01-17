@@ -8,8 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"predictive-analysis-engine/pkg/common"
 	"predictive-analysis-engine/pkg/config"
-	"predictive-analysis-engine/pkg/middleware"
+	"predictive-analysis-engine/pkg/logger"
 )
 
 type Client struct {
@@ -89,19 +90,19 @@ func (c *Client) get(ctx context.Context, path string, dest interface{}) error {
 		return fmt.Errorf("create request failed: %w", err)
 	}
 
-	if cid, ok := ctx.Value(middleware.CorrelationIDKey).(string); ok {
+	if cid, ok := ctx.Value(common.CorrelationIDKey).(string); ok {
 		req.Header.Set("X-Correlation-Id", cid)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		fmt.Printf("[GraphClient] Request failed for %s: %v\n", url, err)
+		logger.Error(fmt.Sprintf("[GraphClient] Request failed for %s", url), err)
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		fmt.Printf("[GraphClient] HTTP %d for %s\n", resp.StatusCode, url)
+		logger.Error(fmt.Sprintf("[GraphClient] HTTP %d for %s", resp.StatusCode, url), nil)
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 

@@ -11,24 +11,22 @@ import (
 	"predictive-analysis-engine/pkg/clients/graph"
 	"predictive-analysis-engine/pkg/config"
 	"predictive-analysis-engine/pkg/logger"
-	"predictive-analysis-engine/pkg/middleware"
 	"predictive-analysis-engine/pkg/simulation"
-	"predictive-analysis-engine/pkg/storage"
 )
 
 type Handler struct {
-	Config        *config.Config
-	GraphClient   *graph.Client
-	DecisionStore *storage.DecisionStore
-	StartTime     time.Time
+	Config            *config.Config
+	GraphClient       *graph.Client
+	SimulationService *simulation.Service
+	StartTime         time.Time
 }
 
-func NewHandler(cfg *config.Config, graphClient *graph.Client, decisionStore *storage.DecisionStore) *Handler {
+func NewHandler(cfg *config.Config, graphClient *graph.Client, simService *simulation.Service) *Handler {
 	return &Handler{
-		Config:        cfg,
-		GraphClient:   graphClient,
-		DecisionStore: decisionStore,
-		StartTime:     time.Now(),
+		Config:            cfg,
+		GraphClient:       graphClient,
+		SimulationService: simService,
+		StartTime:         time.Now(),
 	}
 }
 
@@ -80,8 +78,7 @@ func (h *Handler) HealthHandler(w http.ResponseWriter, r *http.Request) {
 		"uptimeSeconds": uptimeSeconds,
 	}
 
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(resp)
+	respondJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) ServicesHandler(w http.ResponseWriter, r *http.Request) {
@@ -124,9 +121,7 @@ func (h *Handler) ServicesHandler(w http.ResponseWriter, r *http.Request) {
 
 	if sRes.err != nil {
 		logger.Error("Failed to fetch services", sRes.err)
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		respondJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":                 sRes.err.Error(),
 			"services":              []interface{}{},
 			"count":                 0,
@@ -166,8 +161,7 @@ func (h *Handler) ServicesHandler(w http.ResponseWriter, r *http.Request) {
 		"windowMinutes":         windowMinutes,
 	}
 
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(resp)
+	respondJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) TopRiskHandler(w http.ResponseWriter, r *http.Request) {
@@ -195,171 +189,85 @@ func (h *Handler) TopRiskHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "Invalid metric") {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": errMsg})
+			respondError(w, http.StatusBadRequest, errMsg)
 			return
 		}
 		if strings.Contains(errMsg, "disabled") {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Graph API is not enabled"})
+			respondError(w, http.StatusServiceUnavailable, "Graph API is not enabled")
 			return
 		}
 		if strings.Contains(strings.ToLower(errMsg), "timeout") {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusGatewayTimeout)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Graph API timeout"})
+			respondError(w, http.StatusGatewayTimeout, "Graph API timeout")
 			return
 		}
 
 		logger.Error("Risk analysis error", err)
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Internal server error"})
+		respondError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(result)
+	respondJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) SimulateFailureHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	var req simulation.FailureSimulationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		respondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
-	result, err := simulation.SimulateFailure(ctx, h.GraphClient, req)
+	result, err := h.SimulationService.RunFailureSimulation(r.Context(), req)
 	if err != nil {
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "Service not found") {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{"error": errMsg})
-			return
-		}
-		if strings.Contains(errMsg, "maxDepth") {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": errMsg})
-			return
-		}
-
-		logger.Error("Simulation error", err)
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Internal server error"})
+		handleSimulationError(w, err)
 		return
 	}
 
-	if h.DecisionStore != nil {
-		_, err := h.DecisionStore.LogDecision(storage.LogDecisionInput{
-			Timestamp:     time.Now().UTC().Format(time.RFC3339),
-			Type:          "failure",
-			Scenario:      req,
-			Result:        result,
-			CorrelationID: middleware.GetCorrelationID(ctx),
-		})
-		if err != nil {
-			logger.Error("Failed to log decision", err)
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(result)
+	respondJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) SimulateScalingHandler(w http.ResponseWriter, r *http.Request) {
 	var req simulation.ScalingSimulationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		respondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
-	result, err := simulation.SimulateScaling(r.Context(), h.GraphClient, h.Config, req)
+	result, err := h.SimulationService.RunScalingSimulation(r.Context(), req)
 	if err != nil {
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "Service not found") {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{"error": errMsg})
-			return
-		}
-		if strings.Contains(errMsg, "must be") || strings.Contains(errMsg, "Invalid") {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": errMsg})
-			return
-		}
-
-		logger.Error("Simulation error", err)
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Internal server error"})
+		handleSimulationError(w, err)
 		return
 	}
 
-	if h.DecisionStore != nil {
-		_, err := h.DecisionStore.LogDecision(storage.LogDecisionInput{
-			Timestamp:     time.Now().UTC().Format(time.RFC3339),
-			Type:          "scaling",
-			Scenario:      req,
-			Result:        result,
-			CorrelationID: middleware.GetCorrelationID(r.Context()),
-		})
-		if err != nil {
-			logger.Error("Failed to log decision", err)
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(result)
+	respondJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) SimulateAddHandler(w http.ResponseWriter, r *http.Request) {
 	var req simulation.AddSimulationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		respondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
-	ctx := r.Context()
-	result, err := simulation.SimulateAddService(ctx, h.GraphClient, req)
+	result, err := h.SimulationService.RunAddSimulation(r.Context(), req)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if strings.Contains(err.Error(), "must be positive") {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-			return
-		}
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		handleSimulationError(w, err)
 		return
 	}
 
-	if h.DecisionStore != nil {
-		_, err := h.DecisionStore.LogDecision(storage.LogDecisionInput{
-			Timestamp:     time.Now().UTC().Format(time.RFC3339),
-			Type:          "add",
-			Scenario:      req,
-			Result:        result,
-			CorrelationID: middleware.GetCorrelationID(r.Context()),
-		})
-		if err != nil {
-			logger.Error("Failed to log decision", err)
-		}
+	respondJSON(w, http.StatusOK, result)
+}
+
+func handleSimulationError(w http.ResponseWriter, err error) {
+	errMsg := err.Error()
+	if strings.Contains(errMsg, "Service not found") {
+		respondError(w, http.StatusNotFound, errMsg)
+		return
+	}
+	if strings.Contains(errMsg, "maxDepth") || strings.Contains(errMsg, "must be") || strings.Contains(errMsg, "Invalid") {
+		respondError(w, http.StatusBadRequest, errMsg)
+		return
 	}
 
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(result)
+	logger.Error("Simulation error", err)
+	respondError(w, http.StatusInternalServerError, "Internal server error")
 }

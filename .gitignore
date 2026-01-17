@@ -1,7 +1,6 @@
-# Binaries
 predictive-analysis-engine
 server_bin
-server
+analysis-engine
 *.exe
 *.exe~
 *.dll

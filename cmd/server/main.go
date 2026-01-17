@@ -17,7 +17,7 @@ import (
 	"predictive-analysis-engine/pkg/clients/graph"
 	"predictive-analysis-engine/pkg/clients/telemetry"
 	"predictive-analysis-engine/pkg/config"
-	"predictive-analysis-engine/pkg/middleware"
+	"predictive-analysis-engine/pkg/simulation"
 	"predictive-analysis-engine/pkg/storage"
 	"predictive-analysis-engine/pkg/worker"
 )
@@ -50,13 +50,15 @@ func main() {
 	graphClient := graph.NewClient(cfg.GraphAPI)
 	telemetryClient := telemetry.NewClient(cfg)
 
-	apiHandler := api.NewHandler(cfg, graphClient, store)
+	simService := simulation.NewService(cfg, graphClient, store)
+
+	apiHandler := api.NewHandler(cfg, graphClient, simService)
 	decisionsHandler := &api.DecisionsHandler{Store: store}
 	telemetryHandler := &api.TelemetryHandler{Client: telemetryClient, Cfg: cfg}
 
 	r := chi.NewRouter()
 
-	r.Use(middleware.CorrelationMiddleware)
+	r.Use(api.CorrelationMiddleware)
 
 	r.Get("/health", apiHandler.HealthHandler)
 	r.Get("/services", apiHandler.ServicesHandler)

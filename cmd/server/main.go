@@ -66,7 +66,7 @@ func main() {
 	r.Post("/simulate/failure", apiHandler.SimulateFailureHandler)
 	r.Post("/simulate/scale", apiHandler.SimulateScalingHandler)
 	r.Post("/simulate/add", apiHandler.SimulateAddHandler)
-	r.Get("/api/dependency-graph/snapshot", apiHandler.DependencyGraphHandler)
+	r.Get("/dependency-graph/snapshot", apiHandler.DependencyGraphHandler)
 	r.Get("/dependency-graph/snapshot", apiHandler.DependencyGraphHandler)
 
 	decisionsHandler.RegisterRoutes(r)

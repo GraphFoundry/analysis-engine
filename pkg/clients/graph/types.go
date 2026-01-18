@@ -229,3 +229,8 @@ type ServiceScore struct {
 	PageRank    float64 `json:"pagerank"`
 	Betweenness float64 `json:"betweenness"`
 }
+
+type NodeWithResources struct {
+	Name      string        `json:"name"`
+	Resources NodeResources `json:"resources"`
+}

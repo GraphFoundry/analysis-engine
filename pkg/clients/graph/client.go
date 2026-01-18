@@ -50,6 +50,16 @@ func (c *Client) GetServices(ctx context.Context) ([]ServiceInfo, error) {
 	return wrapper.Services, nil
 }
 
+func (c *Client) GetNodes(ctx context.Context) ([]NodeWithResources, error) {
+	var wrapper struct {
+		Nodes []NodeWithResources `json:"nodes"`
+	}
+	if err := c.get(ctx, "/infrastructure/nodes", &wrapper); err != nil {
+		return nil, err
+	}
+	return wrapper.Nodes, nil
+}
+
 func (c *Client) GetNeighborhood(ctx context.Context, serviceName string, k int) (*NeighborhoodResponse, error) {
 	path := fmt.Sprintf("/services/%s/neighborhood?k=%d", url.PathEscape(serviceName), k)
 	var resp NeighborhoodResponse

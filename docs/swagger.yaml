@@ -15,6 +15,21 @@ components:
           type: array
           uniqueItems: false
       type: object
+    graph.NodeWithResources:
+      properties:
+        cores:
+          type: integer
+        cpuUsagePercent:
+          type: number
+        name:
+          type: string
+        ramTotalMB:
+          type: number
+        ramUsedMB:
+          type: number
+        ramUsagePercent:
+          type: number
+      type: object
     api.SnapshotEdge:
       properties:
         id:
@@ -658,6 +673,29 @@ paths:
       summary: Get Dependency Graph Snapshot
       tags:
       - graph
+  /infrastructure/nodes:
+    get:
+      description: Fetches current infrastructure nodes and their resource usage
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/graph.NodeWithResources'
+                type: array
+                uniqueItems: false
+          description: OK
+        "503":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Service Unavailable
+      summary: Get Infrastructure Nodes
+      tags:
+      - infrastructure
   /health:
     get:
       description: Checks if the API and connections to the Graph Engine are healthy

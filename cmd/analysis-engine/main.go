@@ -82,6 +82,7 @@ func main() {
 
 	r.Get("/health", apiHandler.HealthHandler)
 	r.Get("/services", apiHandler.ServicesHandler)
+	r.Get("/infrastructure/nodes", apiHandler.NodesHandler)
 	r.Get("/risk/services/top", apiHandler.TopRiskHandler)
 	r.Post("/simulate/failure", apiHandler.SimulateFailureHandler)
 	r.Post("/simulate/scale", apiHandler.SimulateScalingHandler)

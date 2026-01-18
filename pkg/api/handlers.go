@@ -179,6 +179,31 @@ func (h *Handler) ServicesHandler(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, resp)
 }
 
+// NodesHandler godoc
+// @Summary List Nodes
+// @Description Fetches a list of infrastructure nodes and their resources from the Graph Engine
+// @Tags infrastructure
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 503 {object} map[string]string
+// @Router /infrastructure/nodes [get]
+func (h *Handler) NodesHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	nodes, err := h.GraphClient.GetNodes(ctx)
+	if err != nil {
+		logger.Error("Failed to fetch nodes", err)
+		respondJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error": "Failed to fetch nodes from Graph Engine",
+			"nodes": []interface{}{},
+		})
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"nodes": nodes,
+	})
+}
+
 // TopRiskHandler godoc
 // @Summary Get Top Risky Services
 // @Description Returns services ordered by risk metrics (pagerank or betweenness)

@@ -1,6 +1,5 @@
-predictive-analysis-engine
-server_bin
 analysis-engine
+!analysis-engine/
 *.exe
 *.exe~
 *.dll

@@ -70,6 +70,7 @@ func main() {
 
 	r := chi.NewRouter()
 
+	r.Use(api.CORSMiddleware)
 	r.Use(api.CorrelationMiddleware)
 
 	// Swagger UI

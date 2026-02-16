@@ -64,7 +64,26 @@ func SimulateAddService(ctx context.Context, client *graph.Client, req AddSimula
 	}
 
 	if len(rawNodes) == 0 {
+		infraNodes, infraErr := client.GetNodes(ctx)
+		if infraErr == nil {
+			for _, n := range infraNodes {
+				if n.Name == "" {
+					continue
+				}
+				if _, exists := rawNodes[n.Name]; !exists {
+					rawNodes[n.Name] = &rawNode{
+						Name:            n.Name,
+						CPUUsagePercent: n.Resources.CPU.UsagePercent,
+						CPUCores:        n.Resources.CPU.Cores,
+						RAMUsedMB:       n.Resources.RAM.UsedMB,
+						RAMTotalMB:      n.Resources.RAM.TotalMB,
+					}
+				}
+			}
+		}
+	}
 
+	if len(rawNodes) == 0 {
 		return nil, fmt.Errorf("No nodes found in cluster state. Cannot perform placement analysis.")
 	}
 

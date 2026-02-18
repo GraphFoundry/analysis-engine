@@ -27,10 +27,12 @@ func NewDecisionStore(dbPath string) (*DecisionStore, error) {
 	}
 
 	if err := db.Ping(); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	if _, err := db.Exec("PRAGMA journal_mode = WAL;"); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
 	}
 

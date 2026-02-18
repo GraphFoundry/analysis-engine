@@ -32,7 +32,7 @@ func SimulateAddService(ctx context.Context, client *graph.Client, req AddSimula
 
 	services, err := client.GetServices(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to fetch cluster state: %v", err)
+		return nil, fmt.Errorf("Failed to fetch cluster state: %w", err)
 	}
 
 	type rawNode struct {

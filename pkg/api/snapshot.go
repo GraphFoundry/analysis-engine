@@ -125,7 +125,6 @@ func (h *Handler) DependencyGraphHandler(w http.ResponseWriter, r *http.Request)
 	rawEdges := snapshotResult.Edges
 
 	serviceNamespaceMap := make(map[string]string)
-	serviceMetricsMap := make(map[string]graph.ServiceMetrics)
 
 	centralityMap := make(map[string]graph.ServiceScore)
 	if centralityErr == nil && centralityResult != nil {
@@ -143,7 +142,6 @@ func (h *Handler) DependencyGraphHandler(w http.ResponseWriter, r *http.Request)
 			ns = "default"
 		}
 		serviceNamespaceMap[svc.Name] = ns
-		serviceMetricsMap[svc.Name] = svc
 
 		if namespace != "" && ns != namespace {
 			continue
@@ -156,9 +154,6 @@ func (h *Handler) DependencyGraphHandler(w http.ResponseWriter, r *http.Request)
 		errPct := svc.ErrorRate * 100.0
 		p95 := svc.P95
 		availPct := svc.Availability.Value * 100.0
-		if svc.Availability.Value == 0 && svc.ErrorRate == 0 && svc.RPS == 0 {
-
-		}
 
 		podCountVal := svc.PodCount.Value
 		availabilityVal := svc.Availability.Value
@@ -262,9 +257,7 @@ func calculateRiskLevel(m graph.ServiceMetrics) (string, string) {
 		return "CRITICAL", "No pods running"
 	}
 
-	if isAvailabilityObject {
-
-	} else {
+	if !isAvailabilityObject {
 		if availPct < 50 {
 			return "CRITICAL", fmt.Sprintf("Critical availability (%.1f%%)", availPct)
 		}
@@ -291,9 +284,7 @@ func calculateRiskLevel(m graph.ServiceMetrics) (string, string) {
 	}
 
 	if m.RPS == 0 && m.ErrorRate == 0 && m.P95 == 0 {
-
 		return "LOW", "Operating normally"
-
 	}
 
 	return "LOW", "Operating normally"

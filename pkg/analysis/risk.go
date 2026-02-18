@@ -41,8 +41,6 @@ func GetTopRiskServices(ctx context.Context, client *graph.Client, metric string
 		} else {
 			confidence = "high"
 		}
-	} else {
-
 	}
 
 	topServices := centralityResult.Top

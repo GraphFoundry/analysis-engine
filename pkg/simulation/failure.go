@@ -33,12 +33,6 @@ func SimulateFailure(ctx context.Context, client *graph.Client, req FailureSimul
 
 	targetNode, ok := snapshot.Nodes[targetKey]
 	if !ok {
-
-		if snapshot.TargetKey != "" && snapshot.TargetKey == targetKey {
-
-		} else if _, exists := snapshot.Nodes[snapshot.TargetKey]; exists {
-
-		}
 		return nil, fmt.Errorf("Service not found: %s", req.ServiceId)
 	}
 	targetOut := nodeToOutRef(targetNode, targetKey)

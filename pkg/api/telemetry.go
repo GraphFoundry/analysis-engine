@@ -9,6 +9,7 @@ import (
 
 	"predictive-analysis-engine/pkg/clients/telemetry"
 	"predictive-analysis-engine/pkg/config"
+	"predictive-analysis-engine/pkg/logger"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -62,7 +63,7 @@ func (h *TelemetryHandler) GetServiceMetrics(w http.ResponseWriter, r *http.Requ
 
 	metrics, err := h.Client.GetServiceMetrics(r.Context(), service, fromStr, toStr, step)
 	if err != nil {
-		fmt.Printf("[Telemetry Error] Service metrics failed: %v\n", err)
+		logger.Error("[Telemetry] Service metrics failed", err)
 
 		http.Error(w, `{"error": "Internal server error"}`, http.StatusInternalServerError)
 		return
@@ -120,7 +121,7 @@ func (h *TelemetryHandler) GetEdgeMetrics(w http.ResponseWriter, r *http.Request
 
 	metrics, err := h.Client.GetEdgeMetrics(r.Context(), fromSvc, toSvc, fromStr, toStr, step)
 	if err != nil {
-		fmt.Printf("[Telemetry Error] Edge metrics failed: %v\n", err)
+		logger.Error("[Telemetry] Edge metrics failed", err)
 		http.Error(w, `{"error": "Internal server error"}`, http.StatusInternalServerError)
 		return
 	}

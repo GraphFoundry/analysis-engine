@@ -15,6 +15,7 @@ type Config struct {
 	SQLite          SQLiteConfig
 	TelemetryWorker TelemetryWorkerConfig
 	Telemetry       TelemetryConfig
+	Webhook         WebhookConfig
 }
 
 type SimulationConfig struct {
@@ -60,6 +61,12 @@ type TelemetryConfig struct {
 	Enabled bool
 }
 
+type WebhookConfig struct {
+	Enabled     bool
+	Secret      string
+	ForwardURLs string
+}
+
 func Load() (*Config, error) {
 	cfg := &Config{
 		Simulation: SimulationConfig{
@@ -96,6 +103,11 @@ func Load() (*Config, error) {
 		},
 		Telemetry: TelemetryConfig{
 			Enabled: getEnv("TELEMETRY_ENABLED", "true") != "false",
+		},
+		Webhook: WebhookConfig{
+			Enabled:     getEnv("WEBHOOK_ENABLED", "true") != "false",
+			Secret:      getEnv("WEBHOOK_SECRET", ""),
+			ForwardURLs: getEnv("WEBHOOK_FORWARD_URLS", ""),
 		},
 	}
 

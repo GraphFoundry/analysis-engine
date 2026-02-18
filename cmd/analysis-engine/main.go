@@ -93,8 +93,19 @@ func main() {
 	decisionsHandler.RegisterRoutes(r)
 	r.Mount("/telemetry", telemetryHandler.Routes())
 
-	pollWorker := worker.NewPollWorker(cfg, graphClient, telemetryClient)
-	pollWorker.Start()
+	// Webhook endpoint: receives graph updates from service-graph-engine
+	webhookHandler := api.NewWebhookHandler(cfg, telemetryClient)
+	r.Post("/webhook/graph-update", webhookHandler.HandleGraphUpdate)
+
+	// Only start PollWorker if webhook mode is disabled (fallback)
+	var pollWorker *worker.PollWorker
+	if !cfg.Webhook.Enabled {
+		log.Println("Webhook mode disabled - starting PollWorker for backward compatibility")
+		pollWorker = worker.NewPollWorker(cfg, graphClient, telemetryClient)
+		pollWorker.Start()
+	} else {
+		log.Println("Webhook mode enabled - PollWorker disabled (data pushed via POST /webhook/graph-update)")
+	}
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	srv := &http.Server{
@@ -121,7 +132,9 @@ func main() {
 		log.Printf("Server forced to shutdown: %v", err)
 	}
 
-	pollWorker.Stop()
+	if pollWorker != nil {
+		pollWorker.Stop()
+	}
 
 	telemetryClient.Close()
 

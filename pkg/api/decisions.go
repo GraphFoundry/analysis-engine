@@ -101,19 +101,8 @@ func (h *DecisionsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 50
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil {
-			limit = v
-		}
-	}
-
-	offset := 0
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if v, err := strconv.Atoi(o); err == nil {
-			offset = v
-		}
-	}
+	limit := parseQueryInt(r.URL.Query().Get("limit"), 50)
+	offset := parseQueryInt(r.URL.Query().Get("offset"), 0)
 
 	decisionType := r.URL.Query().Get("type")
 
@@ -147,4 +136,15 @@ func (h *DecisionsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func parseQueryInt(value string, fallback int) int {
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }

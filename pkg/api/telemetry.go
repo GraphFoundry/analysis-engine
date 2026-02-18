@@ -53,33 +53,12 @@ func (h *TelemetryHandler) GetServiceMetrics(w http.ResponseWriter, r *http.Requ
 	toStr := r.URL.Query().Get("to")
 	stepStr := r.URL.Query().Get("step")
 
-	if fromStr == "" || toStr == "" {
-		http.Error(w, `{"error": "Missing required parameters: from, to"}`, http.StatusBadRequest)
+	if errMsg := validateTimeRangeQuery(fromStr, toStr); errMsg != "" {
+		http.Error(w, fmt.Sprintf(`{"error": "%s"}`, errMsg), http.StatusBadRequest)
 		return
 	}
 
-	from, err := time.Parse(time.RFC3339, fromStr)
-	if err != nil {
-		http.Error(w, `{"error": "Invalid timestamp format"}`, http.StatusBadRequest)
-		return
-	}
-	to, err := time.Parse(time.RFC3339, toStr)
-	if err != nil {
-		http.Error(w, `{"error": "Invalid timestamp format"}`, http.StatusBadRequest)
-		return
-	}
-
-	if to.Sub(from) > MaxTimeRange {
-		http.Error(w, `{"error": "Time range exceeds maximum of 7 days"}`, http.StatusBadRequest)
-		return
-	}
-
-	step := 60
-	if stepStr != "" {
-		if s, err := strconv.Atoi(stepStr); err == nil && s > 0 {
-			step = s
-		}
-	}
+	step := parseStepQuery(stepStr)
 
 	metrics, err := h.Client.GetServiceMetrics(r.Context(), service, fromStr, toStr, step)
 	if err != nil {
@@ -132,33 +111,12 @@ func (h *TelemetryHandler) GetEdgeMetrics(w http.ResponseWriter, r *http.Request
 	toStr := r.URL.Query().Get("to")
 	stepStr := r.URL.Query().Get("step")
 
-	if fromStr == "" || toStr == "" {
-		http.Error(w, `{"error": "Missing required parameters: from, to"}`, http.StatusBadRequest)
+	if errMsg := validateTimeRangeQuery(fromStr, toStr); errMsg != "" {
+		http.Error(w, fmt.Sprintf(`{"error": "%s"}`, errMsg), http.StatusBadRequest)
 		return
 	}
 
-	from, err := time.Parse(time.RFC3339, fromStr)
-	if err != nil {
-		http.Error(w, `{"error": "Invalid timestamp format"}`, http.StatusBadRequest)
-		return
-	}
-	to, err := time.Parse(time.RFC3339, toStr)
-	if err != nil {
-		http.Error(w, `{"error": "Invalid timestamp format"}`, http.StatusBadRequest)
-		return
-	}
-
-	if to.Sub(from) > MaxTimeRange {
-		http.Error(w, `{"error": "Time range exceeds maximum of 7 days"}`, http.StatusBadRequest)
-		return
-	}
-
-	step := 60
-	if stepStr != "" {
-		if s, err := strconv.Atoi(stepStr); err == nil && s > 0 {
-			step = s
-		}
-	}
+	step := parseStepQuery(stepStr)
 
 	metrics, err := h.Client.GetEdgeMetrics(r.Context(), fromSvc, toSvc, fromStr, toStr, step)
 	if err != nil {
@@ -185,4 +143,35 @@ func (h *TelemetryHandler) GetEdgeMetrics(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func validateTimeRangeQuery(fromStr, toStr string) string {
+	if fromStr == "" || toStr == "" {
+		return "Missing required parameters: from, to"
+	}
+
+	from, err := time.Parse(time.RFC3339, fromStr)
+	if err != nil {
+		return "Invalid timestamp format"
+	}
+	to, err := time.Parse(time.RFC3339, toStr)
+	if err != nil {
+		return "Invalid timestamp format"
+	}
+
+	if to.Sub(from) > MaxTimeRange {
+		return "Time range exceeds maximum of 7 days"
+	}
+
+	return ""
+}
+
+func parseStepQuery(stepStr string) int {
+	step := 60
+	if stepStr != "" {
+		if s, err := strconv.Atoi(stepStr); err == nil && s > 0 {
+			step = s
+		}
+	}
+	return step
 }

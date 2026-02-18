@@ -14,13 +14,16 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// TelemetryHandler serves telemetry metric query endpoints.
 type TelemetryHandler struct {
 	Client *telemetry.TelemetryClient
 	Cfg    *config.Config
 }
 
+// MaxTimeRange is the maximum allowed telemetry query window.
 const MaxTimeRange = 7 * 24 * time.Hour
 
+// Routes returns the telemetry sub-router mounted at /telemetry.
 func (h *TelemetryHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/service", h.GetServiceMetrics)

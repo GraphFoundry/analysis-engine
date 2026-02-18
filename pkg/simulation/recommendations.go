@@ -10,6 +10,7 @@ const (
 	TrafficMedium   = 10.0
 )
 
+// GenerateFailureRecommendations derives action items from a failure simulation result.
 func GenerateFailureRecommendations(result *FailureSimulationResult) []FailureRecommendation {
 	var recommendations []FailureRecommendation
 	confidence := result.Confidence

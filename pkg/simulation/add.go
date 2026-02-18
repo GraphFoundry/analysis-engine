@@ -10,6 +10,7 @@ import (
 	"predictive-analysis-engine/pkg/clients/graph"
 )
 
+// SimulateAddService evaluates capacity and placement feasibility for a new service.
 func SimulateAddService(ctx context.Context, client *graph.Client, req AddSimulationRequest) (*AddSimulationResult, error) {
 
 	if req.ServiceName == "" {

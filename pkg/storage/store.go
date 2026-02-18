@@ -11,10 +11,12 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// DecisionStore persists simulation decisions in SQLite.
 type DecisionStore struct {
 	db *sql.DB
 }
 
+// NewDecisionStore initializes the SQLite database and ensures schema availability.
 func NewDecisionStore(dbPath string) (*DecisionStore, error) {
 
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
@@ -68,10 +70,12 @@ func (s *DecisionStore) initSchema() error {
 	return nil
 }
 
+// Close closes the underlying SQLite connection.
 func (s *DecisionStore) Close() error {
 	return s.db.Close()
 }
 
+// LogDecisionInput is the payload required to insert a decision record.
 type LogDecisionInput struct {
 	Timestamp     string      `json:"timestamp"`
 	Type          string      `json:"type"`
@@ -80,6 +84,7 @@ type LogDecisionInput struct {
 	CorrelationID string      `json:"correlationId"`
 }
 
+// DecisionRecord is the stored representation returned by decision queries.
 type DecisionRecord struct {
 	ID            int64       `json:"id"`
 	Timestamp     string      `json:"timestamp"`
@@ -90,6 +95,7 @@ type DecisionRecord struct {
 	CreatedAt     string      `json:"createdAt"`
 }
 
+// LogDecision inserts one decision record and returns the inserted metadata.
 func (s *DecisionStore) LogDecision(input LogDecisionInput) (*DecisionRecord, error) {
 	scenarioJSON, err := json.Marshal(input.Scenario)
 	if err != nil {
@@ -125,12 +131,14 @@ func (s *DecisionStore) LogDecision(input LogDecisionInput) (*DecisionRecord, er
 	}, nil
 }
 
+// GetHistoryOptions defines filters and pagination for history reads.
 type GetHistoryOptions struct {
 	Limit  int
 	Offset int
 	Type   string
 }
 
+// GetHistory returns decision history ordered by timestamp descending.
 func (s *DecisionStore) GetHistory(opts GetHistoryOptions) ([]DecisionRecord, error) {
 	limit := opts.Limit
 	if limit <= 0 {
@@ -188,6 +196,7 @@ func (s *DecisionStore) GetHistory(opts GetHistoryOptions) ([]DecisionRecord, er
 	return records, nil
 }
 
+// GetCount returns the number of decisions, optionally filtered by type.
 func (s *DecisionStore) GetCount(decisionType string) (int, error) {
 	query := "SELECT COUNT(*) FROM decisions"
 	args := []interface{}{}

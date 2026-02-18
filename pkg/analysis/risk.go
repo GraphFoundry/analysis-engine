@@ -13,6 +13,7 @@ const (
 	RiskMediumThreshold = 0.5
 )
 
+// GetTopRiskServices ranks services by selected centrality metric and risk band.
 func GetTopRiskServices(ctx context.Context, client *graph.Client, metric string, limit int) (*graph.TopCentralityResponse, error) {
 
 	if metric != "pagerank" && metric != "betweenness" {

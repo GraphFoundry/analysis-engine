@@ -11,6 +11,7 @@ import (
 	"predictive-analysis-engine/pkg/clients/graph"
 )
 
+// SimulateFailure evaluates blast radius and traffic impact for a target service failure.
 func SimulateFailure(ctx context.Context, client *graph.Client, req FailureSimulationRequest) (*FailureSimulationResult, error) {
 	maxDepth := req.Depth
 

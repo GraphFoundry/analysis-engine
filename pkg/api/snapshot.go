@@ -10,12 +10,14 @@ import (
 	"predictive-analysis-engine/pkg/clients/graph"
 )
 
+// GraphSnapshotResponse is the API payload for dependency graph snapshot data.
 type GraphSnapshotResponse struct {
 	Nodes    []SnapshotNode   `json:"nodes"`
 	Edges    []SnapshotEdge   `json:"edges"`
 	Metadata SnapshotMetadata `json:"metadata"`
 }
 
+// SnapshotNode represents a service node in the snapshot graph.
 type SnapshotNode struct {
 	ID              string   `json:"id"`
 	Name            string   `json:"name"`
@@ -33,6 +35,7 @@ type SnapshotNode struct {
 	UpdatedAt       string   `json:"updatedAt"`
 }
 
+// SnapshotEdge represents a directed dependency edge in the snapshot graph.
 type SnapshotEdge struct {
 	ID           string  `json:"id"`
 	Source       string  `json:"source"`
@@ -41,6 +44,7 @@ type SnapshotEdge struct {
 	LatencyP95Ms float64 `json:"latencyP95Ms"`
 }
 
+// SnapshotMetadata provides freshness and cardinality metadata for a snapshot.
 type SnapshotMetadata struct {
 	Stale                 bool   `json:"stale"`
 	LastUpdatedSecondsAgo *int   `json:"lastUpdatedSecondsAgo"`

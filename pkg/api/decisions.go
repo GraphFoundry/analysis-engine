@@ -11,10 +11,12 @@ import (
 	"predictive-analysis-engine/pkg/storage"
 )
 
+// DecisionsHandler exposes decision logging and history endpoints.
 type DecisionsHandler struct {
 	Store *storage.DecisionStore
 }
 
+// RegisterRoutes wires decisions endpoints onto the root router.
 func (h *DecisionsHandler) RegisterRoutes(r *chi.Mux) {
 	r.Post("/decisions/log", h.LogDecision)
 	r.Get("/decisions/history", h.GetHistory)

@@ -472,7 +472,7 @@ func (h *WebhookHandler) processWebhookData(payload WebhookPayload, rawBody []by
 
 // writeTelemetryMetrics writes received metrics to InfluxDB (replaces PollWorker logic).
 func (h *WebhookHandler) writeTelemetryMetrics(ctx context.Context, data GraphData, meta webhookEventMeta) {
-	servicePoints := buildServicePoints(data.MetricsSnapshot.Services)
+	servicePoints := buildServicePoints(data.MetricsSnapshot.Services, data.Services)
 	edgePoints := buildEdgePoints(data.MetricsSnapshot.Edges)
 	nodePoints, podPoints := buildInfraPoints(data.Services)
 
@@ -499,8 +499,15 @@ func (h *WebhookHandler) writeTelemetryMetrics(ctx context.Context, data GraphDa
 }
 
 // buildServicePoints converts webhook service metrics into telemetry ServicePoints.
-func buildServicePoints(services []WebhookServiceMetrics) []telemetry.ServicePoint {
+func buildServicePoints(services []WebhookServiceMetrics, serviceInfos []WebhookServiceInfo) []telemetry.ServicePoint {
 	var points []telemetry.ServicePoint
+
+	availabilityByService := make(map[string]interface{}, len(serviceInfos))
+	for _, svc := range serviceInfos {
+		key := fmt.Sprintf("%s:%s", svc.Namespace, svc.Name)
+		availabilityByService[key] = svc.Availability
+	}
+
 	for _, svc := range services {
 		r := svc.RPS
 		sp := telemetry.ServicePoint{
@@ -514,6 +521,14 @@ func buildServicePoints(services []WebhookServiceMetrics) []telemetry.ServicePoi
 			sp.ErrorRate = &e
 			sp.P95 = &p
 		}
+
+		key := fmt.Sprintf("%s:%s", svc.Namespace, svc.Name)
+		if availabilityRaw, ok := availabilityByService[key]; ok {
+			sp.Availability = normalizeAvailabilityPercent(availabilityRaw)
+		} else {
+			sp.Availability = normalizeAvailabilityPercent(svc.Availability)
+		}
+
 		points = append(points, sp)
 	}
 	return points
@@ -776,16 +791,59 @@ func toInt(v interface{}) int {
 	}
 }
 
-// toFloat64 converts an interface{} (float64 or int from JSON) to float64.
-func toFloat64(v interface{}) float64 {
+func normalizeAvailabilityPercent(v interface{}) *float64 {
+	availability, ok := toOptionalFloat64(v)
+	if !ok || availability < 0 {
+		return nil
+	}
+
+	if availability <= 1 {
+		availability = availability * 100
+	}
+	if availability > 100 {
+		availability = 100
+	}
+
+	return &availability
+}
+
+func toOptionalFloat64(v interface{}) (float64, bool) {
 	switch val := v.(type) {
 	case float64:
-		return val
+		return val, true
+	case float32:
+		return float64(val), true
 	case int:
-		return float64(val)
+		return float64(val), true
+	case int64:
+		return float64(val), true
+	case json.Number:
+		parsed, err := val.Float64()
+		return parsed, err == nil
+	case map[string]interface{}:
+		// Neo4j integers may be encoded as {low, high}; prefer high when present.
+		if highRaw, exists := val["high"]; exists {
+			if high, ok := toOptionalFloat64(highRaw); ok && high != 0 {
+				return high, true
+			}
+		}
+		if lowRaw, exists := val["low"]; exists {
+			if low, ok := toOptionalFloat64(lowRaw); ok {
+				return low, true
+			}
+		}
+		return 0, false
 	default:
-		return 0
+		return 0, false
 	}
+}
+
+// toFloat64 converts an interface{} (float64 or int from JSON) to float64.
+func toFloat64(v interface{}) float64 {
+	if value, ok := toOptionalFloat64(v); ok {
+		return value
+	}
+	return 0
 }
 
 // GetLatestSnapshot returns the cached data from the most recent webhook.

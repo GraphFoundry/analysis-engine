@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"log"
+	"math"
 	"sync"
 	"time"
 
@@ -107,6 +108,9 @@ func (w *PollWorker) poll() {
 				errRate = &e
 				p95Val := svc.P95
 				p95 = &p95Val
+			}
+			if availabilityPct, ok := normalizeAvailabilityPercent(svc.Availability.Value); ok {
+				avail = &availabilityPct
 			}
 
 			servicePoints = append(servicePoints, telemetry.ServicePoint{
@@ -247,4 +251,19 @@ func (w *PollWorker) poll() {
 	}
 
 	log.Printf("[PollWorker] Poll complete: %d services, %d edges, %d nodes\n", len(servicePoints), len(edgePoints), len(nodePoints))
+}
+
+func normalizeAvailabilityPercent(value float64) (float64, bool) {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+		return 0, false
+	}
+
+	if value <= 1 {
+		value = value * 100
+	}
+	if value > 100 {
+		value = 100
+	}
+
+	return value, true
 }

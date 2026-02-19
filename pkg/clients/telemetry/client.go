@@ -24,15 +24,15 @@ type TelemetryClient struct {
 }
 
 type ServiceMetric struct {
-	Timestamp    string  `json:"timestamp"`
-	Service      string  `json:"service"`
-	Namespace    string  `json:"namespace"`
-	RequestRate  float64 `json:"requestRate"`
-	ErrorRate    float64 `json:"errorRate"`
-	P50          float64 `json:"p50"`
-	P95          float64 `json:"p95"`
-	P99          float64 `json:"p99"`
-	Availability float64 `json:"availability"`
+	Timestamp    string   `json:"timestamp"`
+	Service      string   `json:"service"`
+	Namespace    string   `json:"namespace"`
+	RequestRate  float64  `json:"requestRate"`
+	ErrorRate    float64  `json:"errorRate"`
+	P50          *float64 `json:"p50"`
+	P95          float64  `json:"p95"`
+	P99          *float64 `json:"p99"`
+	Availability *float64 `json:"availability"`
 }
 
 type EdgeMetric struct {
@@ -237,6 +237,20 @@ func (c *TelemetryClient) GetServiceMetrics(ctx context.Context, service string,
 					return 0
 				}
 
+				getOptionalFloat := func(name string) *float64 {
+					idx, ok := colMap[name]
+					if !ok || row[idx] == nil {
+						return nil
+					}
+
+					if f, ok := row[idx].(float64); ok {
+						v := f
+						return &v
+					}
+
+					return nil
+				}
+
 				getTime := func() string {
 					idx, ok := colMap["time"]
 					if !ok || row[idx] == nil {
@@ -260,10 +274,10 @@ func (c *TelemetryClient) GetServiceMetrics(ctx context.Context, service string,
 					Namespace:    namespace,
 					RequestRate:  getFloat("avg_request_rate"),
 					ErrorRate:    getFloat("avg_error_rate"),
-					P50:          getFloat("avg_p50"),
+					P50:          getOptionalFloat("avg_p50"),
 					P95:          getFloat("avg_p95"),
-					P99:          getFloat("avg_p99"),
-					Availability: getFloat("avg_availability"),
+					P99:          getOptionalFloat("avg_p99"),
+					Availability: getOptionalFloat("avg_availability"),
 				}
 				metrics = append(metrics, m)
 			}

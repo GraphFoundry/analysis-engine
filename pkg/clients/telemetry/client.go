@@ -183,12 +183,12 @@ func (c *TelemetryClient) GetServiceMetrics(ctx context.Context, service string,
 	stepStr := fmt.Sprintf("%ds", stepSeconds)
 
 	baseQuery := `SELECT 
-		mean("request_rate") AS "avg_request_rate", 
-		mean("error_rate") AS "avg_error_rate", 
-		mean("p50") AS "avg_p50", 
-		mean("p95") AS "avg_p95", 
-		mean("p99") AS "avg_p99", 
-		mean("availability") AS "avg_availability" 
+		last("request_rate") AS "avg_request_rate", 
+		last("error_rate") AS "avg_error_rate", 
+		last("p50") AS "avg_p50", 
+		last("p95") AS "avg_p95", 
+		last("p99") AS "avg_p99", 
+		last("availability") AS "avg_availability" 
 		FROM "service_metrics" 
 		WHERE time >= '%s' AND time < '%s'`
 

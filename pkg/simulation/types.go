@@ -6,13 +6,43 @@ const (
 )
 
 type FailureSimulationRequest struct {
+	ServiceId  string `json:"serviceId"`
+	Depth      int    `json:"depth,omitempty"`
+	MaxDepth   int    `json:"maxDepth,omitempty"`
+	TimeWindow string `json:"timeWindow,omitempty"`
+}
+
+type RequestNormalization struct {
+	ServiceId      string `json:"serviceId"`
+	GraphLookupKey string `json:"graphLookupKey"`
+	DepthUsed      int    `json:"depthUsed"`
+}
+
+type ImpactGraphNode struct {
 	ServiceId string `json:"serviceId"`
-	Depth     int    `json:"depth"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Status    string `json:"status"`
+}
+
+type ImpactGraphEdge struct {
+	Source    string   `json:"source"`
+	Target    string   `json:"target"`
+	Rate      float64  `json:"rate"`
+	ErrorRate float64  `json:"errorRate"`
+	P95       *float64 `json:"p95,omitempty"`
+	Status    string   `json:"status"`
+}
+
+type ImpactGraph struct {
+	Nodes []ImpactGraphNode `json:"nodes"`
+	Edges []ImpactGraphEdge `json:"edges"`
 }
 
 type FailureSimulationResult struct {
 	Target              ServiceRef              `json:"target"`
 	Neighborhood        NeighborhoodMeta        `json:"neighborhood"`
+	RequestNormalized   RequestNormalization    `json:"requestNormalized"`
 	DataFreshness       *DataFreshness          `json:"dataFreshness"`
 	Confidence          string                  `json:"confidence"`
 	Explanation         string                  `json:"explanation"`
@@ -20,8 +50,11 @@ type FailureSimulationResult struct {
 	AffectedDownstream  []AffectedDownstream    `json:"affectedDownstream"`
 	UnreachableServices []UnreachableService    `json:"unreachableServices"`
 	CriticalPaths       []BrokenPath            `json:"criticalPathsToTarget"`
+	ImpactGraph         ImpactGraph             `json:"impactGraph"`
 	TotalLostTrafficRps float64                 `json:"totalLostTrafficRps"`
 	Recommendations     []FailureRecommendation `json:"recommendations"`
+	SourceMode          string                  `json:"sourceMode,omitempty"`
+	SnapshotId          string                  `json:"snapshotId,omitempty"`
 }
 
 type ServiceRef struct {
@@ -177,11 +210,13 @@ type ScalingModel struct {
 
 type ScalingSimulationRequest struct {
 	ServiceId     string        `json:"serviceId"`
+	Depth         int           `json:"depth,omitempty"`
 	CurrentPods   int           `json:"currentPods"`
 	NewPods       int           `json:"newPods"`
 	LatencyMetric string        `json:"latencyMetric,omitempty"`
 	Model         *ScalingModel `json:"model,omitempty"`
 	MaxDepth      int           `json:"maxDepth,omitempty"`
+	TopPaths      int           `json:"topPaths,omitempty"`
 	TimeWindow    string        `json:"timeWindow,omitempty"`
 }
 
@@ -217,21 +252,51 @@ type AffectedPathScaling struct {
 }
 
 type ScalingSimulationResult struct {
-	Target           ServiceRef              `json:"target"`
-	Neighborhood     NeighborhoodMeta        `json:"neighborhood"`
-	DataFreshness    *DataFreshness          `json:"dataFreshness"`
-	Confidence       string                  `json:"confidence"`
-	Explanation      string                  `json:"explanation,omitempty"`
-	Warnings         []string                `json:"warnings,omitempty"`
-	LatencyMetric    string                  `json:"latencyMetric"`
-	ScalingModel     ScalingModel            `json:"scalingModel"`
-	CurrentPods      int                     `json:"currentPods"`
-	NewPods          int                     `json:"newPods"`
-	LatencyEstimate  ScalingLatencyEstimate  `json:"latencyEstimate"`
-	ScalingDirection string                  `json:"scalingDirection"`
-	AffectedCallers  AffectedCallersList     `json:"affectedCallers"`
-	AffectedPaths    []AffectedPathScaling   `json:"affectedPaths"`
-	Recommendations  []FailureRecommendation `json:"recommendations"`
+	Target            ServiceRef              `json:"target"`
+	Neighborhood      NeighborhoodMeta        `json:"neighborhood"`
+	RequestNormalized RequestNormalization    `json:"requestNormalized"`
+	DataFreshness     *DataFreshness          `json:"dataFreshness"`
+	Confidence        string                  `json:"confidence"`
+	Explanation       string                  `json:"explanation,omitempty"`
+	Warnings          []string                `json:"warnings,omitempty"`
+	LatencyMetric     string                  `json:"latencyMetric"`
+	ScalingModel      ScalingModel            `json:"scalingModel"`
+	CurrentPods       int                     `json:"currentPods"`
+	NewPods           int                     `json:"newPods"`
+	LatencyEstimate   ScalingLatencyEstimate  `json:"latencyEstimate"`
+	ScalingDirection  string                  `json:"scalingDirection"`
+	AffectedCallers   AffectedCallersList     `json:"affectedCallers"`
+	AffectedPaths     []AffectedPathScaling   `json:"affectedPaths"`
+	Recommendations   []FailureRecommendation `json:"recommendations"`
+	SourceMode        string                  `json:"sourceMode,omitempty"`
+	SnapshotId        string                  `json:"snapshotId,omitempty"`
+}
+
+type SimulationContextNode struct {
+	ServiceId    string  `json:"serviceId"`
+	Name         string  `json:"name"`
+	Namespace    string  `json:"namespace"`
+	PodCount     int     `json:"podCount"`
+	Availability float64 `json:"availability"`
+}
+
+type SimulationContextEdge struct {
+	Source    string  `json:"source"`
+	Target    string  `json:"target"`
+	Rate      float64 `json:"rate"`
+	ErrorRate float64 `json:"errorRate"`
+	P50       float64 `json:"p50"`
+	P95       float64 `json:"p95"`
+	P99       float64 `json:"p99"`
+}
+
+type SimulationContextResponse struct {
+	Target    ServiceRef              `json:"target"`
+	K         int                     `json:"k"`
+	Direction string                  `json:"direction"`
+	Truncated bool                    `json:"truncated"`
+	Nodes     []SimulationContextNode `json:"nodes"`
+	Edges     []SimulationContextEdge `json:"edges"`
 }
 
 type AffectedCallersList struct {

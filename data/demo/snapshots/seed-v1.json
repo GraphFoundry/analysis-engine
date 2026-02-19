@@ -1,0 +1,18 @@
+{
+  "id": "seed-v1",
+  "generatedAt": "2026-02-19T00:00:00Z",
+  "windowMinutes": 5,
+  "services": [
+    { "serviceId": "default:frontend", "name": "frontend", "namespace": "default" },
+    { "serviceId": "default:checkoutservice", "name": "checkoutservice", "namespace": "default" },
+    { "serviceId": "default:paymentservice", "name": "paymentservice", "namespace": "default" },
+    { "serviceId": "default:recommendationservice", "name": "recommendationservice", "namespace": "default" },
+    { "serviceId": "default:cartservice", "name": "cartservice", "namespace": "default" }
+  ],
+  "edges": [
+    { "source": "default:frontend", "target": "default:checkoutservice", "rate": 126.4, "p95": 186.2, "errorRate": 0.01 },
+    { "source": "default:checkoutservice", "target": "default:paymentservice", "rate": 79.1, "p95": 224.6, "errorRate": 0.03 },
+    { "source": "default:checkoutservice", "target": "default:recommendationservice", "rate": 64.7, "p95": 142.8, "errorRate": 0.01 },
+    { "source": "default:frontend", "target": "default:cartservice", "rate": 110.2, "p95": 98.6, "errorRate": 0.00 }
+  ]
+}

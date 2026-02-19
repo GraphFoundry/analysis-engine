@@ -53,13 +53,23 @@ type PodInfo struct {
 }
 
 type NeighborhoodResponse struct {
-	Center string      `json:"center"`
-	K      int         `json:"k"`
-	Nodes  []GraphNode `json:"nodes"`
-	Edges  []GraphEdge `json:"edges"`
+	Center    string         `json:"center"`
+	CenterRef *CenterService `json:"centerRef,omitempty"`
+	K         int            `json:"k"`
+	Direction string         `json:"direction,omitempty"`
+	Truncated bool           `json:"truncated,omitempty"`
+	Nodes     []GraphNode    `json:"nodes"`
+	Edges     []GraphEdge    `json:"edges"`
+}
+
+type CenterService struct {
+	ServiceId string `json:"serviceId"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
 }
 
 type GraphNode struct {
+	ServiceId    string  `json:"serviceId,omitempty"`
 	Name         string  `json:"name"`
 	Namespace    string  `json:"namespace"`
 	PodCount     int     `json:"podCount"`
@@ -67,8 +77,10 @@ type GraphNode struct {
 }
 
 type GraphEdge struct {
-	From      string  `json:"from"`
-	To        string  `json:"to"`
+	From      string  `json:"from,omitempty"`
+	To        string  `json:"to,omitempty"`
+	Source    string  `json:"source,omitempty"`
+	Target    string  `json:"target,omitempty"`
 	Rate      float64 `json:"rate"`
 	ErrorRate float64 `json:"errorRate"`
 	P50       float64 `json:"p50"`

@@ -186,28 +186,53 @@ func (s *DecisionStore) GetHistory(opts GetHistoryOptions) ([]DecisionRecord, er
 
 	var records []DecisionRecord
 	for rows.Next() {
-		var r DecisionRecord
-		var scenarioStr, resultStr string
-		var corrID sql.NullString
-
-		if err := rows.Scan(&r.ID, &r.Timestamp, &r.Type, &scenarioStr, &resultStr, &corrID, &r.CreatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan row: %w", err)
+		r, err := scanDecisionRow(rows)
+		if err != nil {
+			return nil, err
 		}
-
-		if corrID.Valid {
-			r.CorrelationID = corrID.String
-		}
-
-		if err := json.Unmarshal([]byte(scenarioStr), &r.Scenario); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal scenario: %w", err)
-		}
-		if err := json.Unmarshal([]byte(resultStr), &r.Result); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal result: %w", err)
-		}
-
 		records = append(records, r)
 	}
 
+	return records, nil
+}
+
+// GetByID returns a single decision by ID.
+func (s *DecisionStore) GetByID(id int64) (*DecisionRecord, error) {
+	query := "SELECT id, timestamp, type, scenario, result, correlation_id, created_at FROM decisions WHERE id = ? LIMIT 1"
+	rows, err := s.db.Query(query, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query decision by id: %w", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return nil, nil
+	}
+
+	record, err := scanDecisionRow(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &record, nil
+}
+
+// GetHistorySince returns all decision records from a timestamp (inclusive), ordered by timestamp ascending.
+func (s *DecisionStore) GetHistorySince(since time.Time) ([]DecisionRecord, error) {
+	query := "SELECT id, timestamp, type, scenario, result, correlation_id, created_at FROM decisions WHERE timestamp >= ? ORDER BY timestamp ASC"
+	rows, err := s.db.Query(query, since.UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query decisions since: %w", err)
+	}
+	defer rows.Close()
+
+	records := []DecisionRecord{}
+	for rows.Next() {
+		r, err := scanDecisionRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, r)
+	}
 	return records, nil
 }
 
@@ -226,6 +251,26 @@ func (s *DecisionStore) GetCount(decisionType string) (int, error) {
 		return 0, fmt.Errorf("failed to count decisions: %w", err)
 	}
 	return count, nil
+}
+
+func scanDecisionRow(rows *sql.Rows) (DecisionRecord, error) {
+	var record DecisionRecord
+	var scenarioStr, resultStr string
+	var corrID sql.NullString
+
+	if err := rows.Scan(&record.ID, &record.Timestamp, &record.Type, &scenarioStr, &resultStr, &corrID, &record.CreatedAt); err != nil {
+		return DecisionRecord{}, fmt.Errorf("failed to scan row: %w", err)
+	}
+	if corrID.Valid {
+		record.CorrelationID = corrID.String
+	}
+	if err := json.Unmarshal([]byte(scenarioStr), &record.Scenario); err != nil {
+		return DecisionRecord{}, fmt.Errorf("failed to unmarshal scenario: %w", err)
+	}
+	if err := json.Unmarshal([]byte(resultStr), &record.Result); err != nil {
+		return DecisionRecord{}, fmt.Errorf("failed to unmarshal result: %w", err)
+	}
+	return record, nil
 }
 
 // RegisterWebhookEvent stores a webhook event ID for idempotency and returns whether it is a duplicate.

@@ -31,18 +31,7 @@ func (s *Service) RunFailureSimulation(ctx context.Context, req FailureSimulatio
 		return nil, err
 	}
 
-	if s.decisionStore != nil {
-		_, err := s.decisionStore.LogDecision(storage.LogDecisionInput{
-			Timestamp:     time.Now().UTC().Format(time.RFC3339),
-			Type:          "failure",
-			Scenario:      req,
-			Result:        result,
-			CorrelationID: common.GetCorrelationID(ctx),
-		})
-		if err != nil {
-			logger.Error("Failed to log decision", err)
-		}
-	}
+	s.LogDecision(ctx, "failure", req, result)
 
 	return result, nil
 }
@@ -53,18 +42,7 @@ func (s *Service) RunScalingSimulation(ctx context.Context, req ScalingSimulatio
 		return nil, err
 	}
 
-	if s.decisionStore != nil {
-		_, err := s.decisionStore.LogDecision(storage.LogDecisionInput{
-			Timestamp:     time.Now().UTC().Format(time.RFC3339),
-			Type:          "scaling",
-			Scenario:      req,
-			Result:        result,
-			CorrelationID: common.GetCorrelationID(ctx),
-		})
-		if err != nil {
-			logger.Error("Failed to log decision", err)
-		}
-	}
+	s.LogDecision(ctx, "scaling", req, result)
 
 	return result, nil
 }
@@ -75,18 +53,24 @@ func (s *Service) RunAddSimulation(ctx context.Context, req AddSimulationRequest
 		return nil, err
 	}
 
-	if s.decisionStore != nil {
-		_, err := s.decisionStore.LogDecision(storage.LogDecisionInput{
-			Timestamp:     time.Now().UTC().Format(time.RFC3339),
-			Type:          "add",
-			Scenario:      req,
-			Result:        result,
-			CorrelationID: common.GetCorrelationID(ctx),
-		})
-		if err != nil {
-			logger.Error("Failed to log decision", err)
-		}
-	}
+	s.LogDecision(ctx, "add", req, result)
 
 	return result, nil
+}
+
+func (s *Service) LogDecision(ctx context.Context, decisionType string, scenario interface{}, result interface{}) {
+	if s.decisionStore == nil {
+		return
+	}
+
+	_, err := s.decisionStore.LogDecision(storage.LogDecisionInput{
+		Timestamp:     time.Now().UTC().Format(time.RFC3339),
+		Type:          decisionType,
+		Scenario:      scenario,
+		Result:        result,
+		CorrelationID: common.GetCorrelationID(ctx),
+	})
+	if err != nil {
+		logger.Error("Failed to log decision", err)
+	}
 }

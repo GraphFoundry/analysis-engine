@@ -14,23 +14,34 @@ import (
 // SimulateFailure evaluates blast radius and traffic impact for a target service failure.
 func SimulateFailure(ctx context.Context, client *graph.Client, req FailureSimulationRequest) (*FailureSimulationResult, error) {
 	maxDepth := req.Depth
+	if req.MaxDepth > 0 {
+		maxDepth = req.MaxDepth
+	}
 
-	if maxDepth < 2 {
-		maxDepth = 2
+	if maxDepth < 1 {
+		maxDepth = 1
 	}
 
 	if maxDepth > 3 {
 		return nil, fmt.Errorf("maxDepth > 3 not supported. Got: %d", maxDepth)
 	}
 
-	neighborhood, err := client.GetNeighborhood(ctx, req.ServiceId, maxDepth)
+	normalizedServiceID, graphLookupKey := normalizeServiceIdentifier(req.ServiceId)
+	neighborhood, err := client.GetNeighborhoodWithOptions(ctx, graphLookupKey, maxDepth, graph.NeighborhoodOptions{
+		Direction: "both",
+		MaxNodes:  200,
+		MaxEdges:  400,
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	snapshot := buildSnapshot(neighborhood)
 
-	targetKey := req.ServiceId
+	targetKey := normalizedServiceID
+	if _, ok := snapshot.Nodes[targetKey]; !ok {
+		targetKey = snapshot.TargetKey
+	}
 
 	targetNode, ok := snapshot.Nodes[targetKey]
 	if !ok {
@@ -176,6 +187,11 @@ func SimulateFailure(ctx context.Context, client *graph.Client, req FailureSimul
 			DepthUsed:    maxDepth,
 			GeneratedAt:  time.Now().Format(time.RFC3339),
 		},
+		RequestNormalized: RequestNormalization{
+			ServiceId:      normalizedServiceID,
+			GraphLookupKey: graphLookupKey,
+			DepthUsed:      maxDepth,
+		},
 		DataFreshness:       df,
 		Confidence:          confidence,
 		Explanation:         explanation,
@@ -183,7 +199,9 @@ func SimulateFailure(ctx context.Context, client *graph.Client, req FailureSimul
 		AffectedDownstream:  affectedDownstream,
 		UnreachableServices: unreachableServices,
 		CriticalPaths:       criticalPaths,
+		ImpactGraph:         buildFailureImpactGraph(snapshot, targetKey, affectedCallers, affectedDownstream, unreachableServices, criticalPaths),
 		TotalLostTrafficRps: totalLostTrafficRps,
+		SourceMode:          "live",
 	}
 
 	result.Recommendations = GenerateFailureRecommendations(result)
@@ -203,30 +221,24 @@ func buildSnapshot(resp *graph.NeighborhoodResponse) *GraphSnapshot {
 	nameToID := make(map[string]string)
 
 	for _, n := range resp.Nodes {
-		key := toCanonicalServiceId(n.Namespace, n.Name)
+		key := strings.TrimSpace(n.ServiceId)
+		if key == "" {
+			key = toCanonicalServiceId(n.Namespace, n.Name)
+		}
 		nodes[key] = &Node{Name: n.Name, Namespace: n.Namespace}
 
-		nameToID[n.Name] = key
+		if n.Name != "" {
+			nameToID[n.Name] = key
+		}
 
 		nameToID[key] = key
 	}
 
 	for _, e := range resp.Edges {
-
-		srcID := e.From
-		if mapped, ok := nameToID[e.From]; ok {
-			srcID = mapped
-		} else {
-
-			srcID = toCanonicalServiceId("default", e.From)
-		}
-
-		tgtID := e.To
-		if mapped, ok := nameToID[e.To]; ok {
-			tgtID = mapped
-		} else {
-			tgtID = toCanonicalServiceId("default", e.To)
-		}
+		srcRaw := firstNonEmpty(e.Source, e.From)
+		tgtRaw := firstNonEmpty(e.Target, e.To)
+		srcID := resolveEdgeEndpointID(srcRaw, nameToID)
+		tgtID := resolveEdgeEndpointID(tgtRaw, nameToID)
 
 		edge := &Edge{
 			Source:    srcID,
@@ -243,6 +255,9 @@ func buildSnapshot(resp *graph.NeighborhoodResponse) *GraphSnapshot {
 	}
 
 	targetKey := resp.Center
+	if resp.CenterRef != nil && strings.TrimSpace(resp.CenterRef.ServiceId) != "" {
+		targetKey = resp.CenterRef.ServiceId
+	}
 	if mapped, ok := nameToID[targetKey]; ok {
 		targetKey = mapped
 	} else {
@@ -273,6 +288,33 @@ func toCanonicalServiceId(namespace, name string) string {
 		namespace = "default"
 	}
 	return fmt.Sprintf("%s:%s", namespace, name)
+}
+
+func normalizeServiceIdentifier(raw string) (canonical string, graphLookupKey string) {
+	ns, name := parseServiceRef(strings.TrimSpace(raw))
+	if name == "" {
+		return toCanonicalServiceId("default", raw), raw
+	}
+	return toCanonicalServiceId(ns, name), name
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func resolveEdgeEndpointID(raw string, nameToID map[string]string) string {
+	if mapped, ok := nameToID[raw]; ok {
+		return mapped
+	}
+	if strings.Contains(raw, ":") {
+		return raw
+	}
+	return toCanonicalServiceId("default", raw)
 }
 
 func nodeToOutRef(node *Node, fallbackKey string) ServiceRef {
@@ -383,4 +425,99 @@ func estimateBoundaryLostTraffic(snapshot *GraphSnapshot, reachable map[string]b
 		}
 	}
 	return lostByNode
+}
+
+func buildFailureImpactGraph(
+	snapshot *GraphSnapshot,
+	targetKey string,
+	affectedCallers []AffectedCaller,
+	affectedDownstream []AffectedDownstream,
+	unreachableServices []UnreachableService,
+	criticalPaths []BrokenPath,
+) ImpactGraph {
+	nodeStatus := make(map[string]string)
+	nodeStatus[targetKey] = "target_failed"
+
+	brokenNodes := make(map[string]bool)
+	for _, caller := range affectedCallers {
+		if caller.ServiceId != "" {
+			brokenNodes[caller.ServiceId] = true
+		}
+	}
+	for _, downstream := range affectedDownstream {
+		if downstream.ServiceId != "" {
+			brokenNodes[downstream.ServiceId] = true
+		}
+	}
+	for _, path := range criticalPaths {
+		for _, serviceID := range path.Path {
+			if serviceID != targetKey {
+				brokenNodes[serviceID] = true
+			}
+		}
+	}
+	for serviceID := range brokenNodes {
+		if nodeStatus[serviceID] == "" {
+			nodeStatus[serviceID] = "broken"
+		}
+	}
+
+	unreachable := make(map[string]bool)
+	for _, service := range unreachableServices {
+		if service.ServiceId != "" {
+			unreachable[service.ServiceId] = true
+			nodeStatus[service.ServiceId] = "unreachable"
+		}
+	}
+
+	nodeKeys := make([]string, 0, len(snapshot.Nodes))
+	for key := range snapshot.Nodes {
+		nodeKeys = append(nodeKeys, key)
+	}
+	sort.Strings(nodeKeys)
+
+	nodes := make([]ImpactGraphNode, 0, len(nodeKeys))
+	for _, key := range nodeKeys {
+		ref := nodeToOutRef(snapshot.Nodes[key], key)
+		status := nodeStatus[key]
+		if status == "" {
+			status = "normal"
+		}
+		nodes = append(nodes, ImpactGraphNode{
+			ServiceId: ref.ServiceId,
+			Name:      ref.Name,
+			Namespace: ref.Namespace,
+			Status:    status,
+		})
+	}
+
+	edges := make([]ImpactGraphEdge, 0, len(snapshot.Edges))
+	for _, edge := range snapshot.Edges {
+		status := "normal"
+		if edge.Source == targetKey || edge.Target == targetKey || nodeStatus[edge.Source] == "broken" || nodeStatus[edge.Target] == "broken" {
+			status = "broken"
+		}
+		if unreachable[edge.Source] || unreachable[edge.Target] {
+			status = "unreachable"
+		}
+		edges = append(edges, ImpactGraphEdge{
+			Source:    edge.Source,
+			Target:    edge.Target,
+			Rate:      edge.Rate,
+			ErrorRate: edge.ErrorRate,
+			P95:       edge.P95,
+			Status:    status,
+		})
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].Source == edges[j].Source {
+			return edges[i].Target < edges[j].Target
+		}
+		return edges[i].Source < edges[j].Source
+	})
+
+	return ImpactGraph{
+		Nodes: nodes,
+		Edges: edges,
+	}
 }

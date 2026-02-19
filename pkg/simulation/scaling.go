@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"predictive-analysis-engine/pkg/clients/graph"
@@ -14,6 +15,9 @@ import (
 func SimulateScaling(ctx context.Context, client *graph.Client, cfg *config.Config, req ScalingSimulationRequest) (*ScalingSimulationResult, error) {
 
 	maxDepth := req.MaxDepth
+	if maxDepth == 0 {
+		maxDepth = req.Depth
+	}
 	if maxDepth == 0 {
 		maxDepth = cfg.Simulation.MaxTraversalDepth
 	}
@@ -51,7 +55,12 @@ func SimulateScaling(ctx context.Context, client *graph.Client, cfg *config.Conf
 		return nil, fmt.Errorf("alpha must be between 0 and 1")
 	}
 
-	neighborhood, err := client.GetNeighborhood(ctx, req.ServiceId, maxDepth)
+	normalizedServiceID, graphLookupKey := normalizeServiceIdentifier(req.ServiceId)
+	neighborhood, err := client.GetNeighborhoodWithOptions(ctx, graphLookupKey, maxDepth, graph.NeighborhoodOptions{
+		Direction: "in",
+		MaxNodes:  200,
+		MaxEdges:  400,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +68,10 @@ func SimulateScaling(ctx context.Context, client *graph.Client, cfg *config.Conf
 
 	targetKey := snapshot.TargetKey
 	if targetKey == "" {
-		targetKey = req.ServiceId
+		targetKey = normalizedServiceID
+	}
+	if _, ok := snapshot.Nodes[targetKey]; !ok {
+		targetKey = normalizedServiceID
 	}
 	targetNode, ok := snapshot.Nodes[targetKey]
 	if !ok {
@@ -158,6 +170,12 @@ func SimulateScaling(ctx context.Context, client *graph.Client, cfg *config.Conf
 	})
 
 	maxPaths := cfg.Simulation.MaxPathsReturned
+	if req.TopPaths > 0 {
+		maxPaths = req.TopPaths
+	}
+	if maxPaths > 20 {
+		maxPaths = 20
+	}
 	topPaths := FindTopPathsToTarget(snapshot, targetKey, maxDepth, maxPaths)
 
 	affectedPaths := []AffectedPathScaling{}
@@ -234,7 +252,17 @@ func SimulateScaling(ctx context.Context, client *graph.Client, cfg *config.Conf
 		if d2 == nil {
 			return true
 		}
-		return math.Abs(*d1) > math.Abs(*d2)
+		abs1 := math.Abs(*d1)
+		abs2 := math.Abs(*d2)
+		if abs1 != abs2 {
+			return abs1 > abs2
+		}
+		if affectedPaths[i].PathRps != affectedPaths[j].PathRps {
+			return affectedPaths[i].PathRps > affectedPaths[j].PathRps
+		}
+		path1 := strings.Join(affectedPaths[i].Path, "->")
+		path2 := strings.Join(affectedPaths[j].Path, "->")
+		return path1 < path2
 	})
 
 	for i := range affectedCallers {
@@ -277,10 +305,6 @@ func SimulateScaling(ctx context.Context, client *graph.Client, cfg *config.Conf
 		pDelta = &d
 	}
 
-	if targetOut.Namespace == "default" {
-		targetOut.ServiceId = targetOut.Name
-	}
-
 	result := &ScalingSimulationResult{
 		Target: targetOut,
 		Neighborhood: NeighborhoodMeta{
@@ -289,6 +313,11 @@ func SimulateScaling(ctx context.Context, client *graph.Client, cfg *config.Conf
 			EdgeCount:    len(snapshot.Edges),
 			DepthUsed:    maxDepth,
 			GeneratedAt:  time.Now().Format(time.RFC3339),
+		},
+		RequestNormalized: RequestNormalization{
+			ServiceId:      normalizedServiceID,
+			GraphLookupKey: graphLookupKey,
+			DepthUsed:      maxDepth,
 		},
 		DataFreshness:    df,
 		Confidence:       confidence,
@@ -310,6 +339,7 @@ func SimulateScaling(ctx context.Context, client *graph.Client, cfg *config.Conf
 		},
 		AffectedPaths:   affectedPaths,
 		Recommendations: []FailureRecommendation{},
+		SourceMode:      "live",
 	}
 
 	if len(result.AffectedCallers.Items) > cfg.Simulation.MaxPathsReturned {

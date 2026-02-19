@@ -1,9 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -281,6 +285,21 @@ func (h *Handler) SimulateFailureHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	if mode == "demo" {
+		snapshotID := strings.TrimSpace(r.URL.Query().Get("snapshotId"))
+		result, err := loadDemoFailureResult(req, snapshotID)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if h.SimulationService != nil {
+			h.SimulationService.LogDecision(r.Context(), "failure", req, result)
+		}
+		respondJSON(w, http.StatusOK, result)
+		return
+	}
+
 	result, err := h.SimulationService.RunFailureSimulation(r.Context(), req)
 	if err != nil {
 		handleSimulationError(w, err)
@@ -310,6 +329,21 @@ func (h *Handler) SimulateScalingHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	if mode == "demo" {
+		snapshotID := strings.TrimSpace(r.URL.Query().Get("snapshotId"))
+		result, err := loadDemoScalingResult(req, snapshotID)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if h.SimulationService != nil {
+			h.SimulationService.LogDecision(r.Context(), "scaling", req, result)
+		}
+		respondJSON(w, http.StatusOK, result)
+		return
+	}
+
 	result, err := h.SimulationService.RunScalingSimulation(r.Context(), req)
 	if err != nil {
 		handleSimulationError(w, err)
@@ -317,6 +351,198 @@ func (h *Handler) SimulateScalingHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) SimulateContextHandler(w http.ResponseWriter, r *http.Request) {
+	serviceID := strings.TrimSpace(r.URL.Query().Get("serviceId"))
+	if serviceID == "" {
+		respondError(w, http.StatusBadRequest, "serviceId query parameter is required")
+		return
+	}
+
+	k := 2
+	if rawK := strings.TrimSpace(r.URL.Query().Get("k")); rawK != "" {
+		parsed, err := strconv.Atoi(rawK)
+		if err != nil || parsed < 1 || parsed > 3 {
+			respondError(w, http.StatusBadRequest, "k must be an integer between 1 and 3")
+			return
+		}
+		k = parsed
+	}
+
+	direction := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("direction")))
+	if direction == "" {
+		direction = "both"
+	}
+	if direction != "both" && direction != "in" && direction != "out" {
+		respondError(w, http.StatusBadRequest, "direction must be one of: both, in, out")
+		return
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	if mode == "" {
+		mode = "live"
+	}
+	if mode != "live" && mode != "demo" {
+		respondError(w, http.StatusBadRequest, "mode must be one of: live, demo")
+		return
+	}
+
+	canonicalServiceID, graphLookupKey := normalizeServiceIDForLookup(serviceID)
+	if mode == "demo" {
+		snapshotID := strings.TrimSpace(r.URL.Query().Get("snapshotId"))
+		demoContext, err := loadDemoSimulationContext(canonicalServiceID, k, direction, snapshotID)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		respondJSON(w, http.StatusOK, demoContext)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	neighborhood, err := h.GraphClient.GetNeighborhoodWithOptions(ctx, graphLookupKey, k, graph.NeighborhoodOptions{
+		Direction: direction,
+		MaxNodes:  200,
+		MaxEdges:  400,
+	})
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			respondError(w, http.StatusServiceUnavailable, "Graph Engine context lookup timed out. Switch to Demo Snapshot Mode or retry.")
+			return
+		}
+		errMsgLower := strings.ToLower(err.Error())
+		if strings.Contains(errMsgLower, "http 404") {
+			respondError(w, http.StatusNotFound, fmt.Sprintf("Service %s not found in graph context", canonicalServiceID))
+			return
+		}
+		if isContextUnavailableError(errMsgLower) {
+			respondError(w, http.StatusServiceUnavailable, "Graph Engine context unavailable. Switch to Demo Snapshot Mode or retry.")
+			return
+		}
+		logger.Error("Failed to fetch simulation context", err)
+		respondError(w, http.StatusInternalServerError, "Failed to build simulation context")
+		return
+	}
+
+	nodesByID := map[string]simulation.SimulationContextNode{}
+	lookupByName := map[string]string{}
+
+	for _, node := range neighborhood.Nodes {
+		ns := strings.TrimSpace(node.Namespace)
+		if ns == "" {
+			ns = "default"
+		}
+		serviceNodeID := strings.TrimSpace(node.ServiceId)
+		if serviceNodeID == "" {
+			serviceNodeID = fmt.Sprintf("%s:%s", ns, node.Name)
+		}
+
+		nodesByID[serviceNodeID] = simulation.SimulationContextNode{
+			ServiceId:    serviceNodeID,
+			Name:         node.Name,
+			Namespace:    ns,
+			PodCount:     node.PodCount,
+			Availability: node.Availability,
+		}
+		if node.Name != "" {
+			lookupByName[node.Name] = serviceNodeID
+		}
+	}
+
+	edges := make([]simulation.SimulationContextEdge, 0, len(neighborhood.Edges))
+	for _, edge := range neighborhood.Edges {
+		source := strings.TrimSpace(firstNonEmpty(edge.Source, edge.From))
+		target := strings.TrimSpace(firstNonEmpty(edge.Target, edge.To))
+
+		if !strings.Contains(source, ":") {
+			if mapped, ok := lookupByName[source]; ok {
+				source = mapped
+			} else {
+				source = fmt.Sprintf("default:%s", source)
+			}
+		}
+		if !strings.Contains(target, ":") {
+			if mapped, ok := lookupByName[target]; ok {
+				target = mapped
+			} else {
+				target = fmt.Sprintf("default:%s", target)
+			}
+		}
+
+		edges = append(edges, simulation.SimulationContextEdge{
+			Source:    source,
+			Target:    target,
+			Rate:      edge.Rate,
+			ErrorRate: edge.ErrorRate,
+			P50:       edge.P50,
+			P95:       edge.P95,
+			P99:       edge.P99,
+		})
+	}
+
+	if _, exists := nodesByID[canonicalServiceID]; !exists {
+		if centerRef := neighborhood.CenterRef; centerRef != nil {
+			ns := strings.TrimSpace(centerRef.Namespace)
+			if ns == "" {
+				ns = "default"
+			}
+			centerID := strings.TrimSpace(centerRef.ServiceId)
+			if centerID == "" {
+				centerID = fmt.Sprintf("%s:%s", ns, centerRef.Name)
+			}
+			nodesByID[centerID] = simulation.SimulationContextNode{
+				ServiceId: centerID,
+				Name:      centerRef.Name,
+				Namespace: ns,
+			}
+			canonicalServiceID = centerID
+		}
+	}
+
+	nodes := make([]simulation.SimulationContextNode, 0, len(nodesByID))
+	for _, node := range nodesByID {
+		nodes = append(nodes, node)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ServiceId < nodes[j].ServiceId })
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].Source == edges[j].Source {
+			return edges[i].Target < edges[j].Target
+		}
+		return edges[i].Source < edges[j].Source
+	})
+
+	target := simulation.ServiceRef{
+		ServiceId: canonicalServiceID,
+	}
+	if node, ok := nodesByID[canonicalServiceID]; ok {
+		target.Name = node.Name
+		target.Namespace = node.Namespace
+	}
+
+	respondJSON(w, http.StatusOK, simulation.SimulationContextResponse{
+		Target:    target,
+		K:         k,
+		Direction: direction,
+		Truncated: neighborhood.Truncated,
+		Nodes:     nodes,
+		Edges:     edges,
+	})
+}
+
+func (h *Handler) SimulationCapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"enabled":      []string{"failure", "scale"},
+		"experimental": []string{"add-service"},
+	})
+}
+
+func (h *Handler) DemoSnapshotsHandler(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"snapshots": listDemoSnapshots(),
+	})
 }
 
 // SimulateAddHandler godoc
@@ -377,4 +603,40 @@ func handleSimulationError(w http.ResponseWriter, err error) {
 
 	logger.Error("Simulation error", err)
 	respondError(w, http.StatusInternalServerError, "Internal server error")
+}
+
+func isContextUnavailableError(errMsgLower string) bool {
+	return strings.Contains(errMsgLower, "timeout") ||
+		strings.Contains(errMsgLower, "deadline exceeded") ||
+		strings.Contains(errMsgLower, "request failed") ||
+		strings.Contains(errMsgLower, "connection refused") ||
+		strings.Contains(errMsgLower, "http 502") ||
+		strings.Contains(errMsgLower, "http 503") ||
+		strings.Contains(errMsgLower, "http 504")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func normalizeServiceIDForLookup(raw string) (canonical string, lookup string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "default:", ""
+	}
+	if strings.Contains(raw, ":") {
+		parts := strings.SplitN(raw, ":", 2)
+		namespace := strings.TrimSpace(parts[0])
+		name := strings.TrimSpace(parts[1])
+		if namespace == "" {
+			namespace = "default"
+		}
+		return fmt.Sprintf("%s:%s", namespace, name), name
+	}
+	return fmt.Sprintf("default:%s", raw), raw
 }

@@ -94,8 +94,9 @@ func main() {
 	r.Mount("/telemetry", telemetryHandler.Routes())
 
 	// Webhook endpoint: receives graph updates from service-graph-engine
-	webhookHandler := api.NewWebhookHandler(cfg, telemetryClient)
+	webhookHandler := api.NewWebhookHandler(cfg, telemetryClient, store)
 	r.Post("/webhook/graph-update", webhookHandler.HandleGraphUpdate)
+	r.Get("/webhook/status", webhookHandler.HandleWebhookStatus)
 
 	// Only start PollWorker if webhook mode is disabled (fallback)
 	var pollWorker *worker.PollWorker

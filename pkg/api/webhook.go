@@ -7,30 +7,54 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"predictive-analysis-engine/pkg/clients/graph"
 	"predictive-analysis-engine/pkg/clients/telemetry"
 	"predictive-analysis-engine/pkg/config"
+	"predictive-analysis-engine/pkg/storage"
 )
 
 // WebhookHandler receives graph update webhooks from the service-graph-engine.
 // It replaces the PollWorker by processing pushed data instead of polling.
 type WebhookHandler struct {
 	telemetryClient *telemetry.TelemetryClient
+	decisionStore   *storage.DecisionStore
 	cfg             *config.Config
 	forwardURLs     []string
 	httpClient      *http.Client
+	processingSem   chan struct{}
 
 	// Cache the latest snapshot for API consumers
 	mu             sync.RWMutex
 	latestSnapshot *CachedGraphData
+
+	// Basic fixed-window rate limiter state for inbound webhook traffic.
+	rlMu          sync.Mutex
+	rlWindowStart time.Time
+	rlCount       int
+
+	stats webhookRuntimeStats
+}
+
+type webhookRuntimeStats struct {
+	received              uint64
+	accepted              uint64
+	duplicates            uint64
+	failed                uint64
+	forwarded             uint64
+	retried               uint64
+	processed             uint64
+	processLatencyMsTotal uint64
 }
 
 // CachedGraphData holds the most recent data received via webhook.
@@ -44,9 +68,13 @@ type CachedGraphData struct {
 
 // WebhookPayload is the expected JSON structure from service-graph-engine.
 type WebhookPayload struct {
-	Event     string    `json:"event"`
-	Timestamp string    `json:"timestamp"`
-	Data      GraphData `json:"data"`
+	Event         string    `json:"event"`
+	Timestamp     string    `json:"timestamp"`
+	SchemaVersion string    `json:"schema_version,omitempty"`
+	EventID       string    `json:"event_id,omitempty"`
+	CorrelationID string    `json:"correlation_id,omitempty"`
+	SentAt        string    `json:"sent_at,omitempty"`
+	Data          GraphData `json:"data"`
 }
 
 // GraphData contains the full graph update pushed by service-graph-engine.
@@ -138,16 +166,29 @@ type WebhookCentralityScore struct {
 	Betweenness float64 `json:"betweenness"`
 }
 
-func NewWebhookHandler(cfg *config.Config, tClient *telemetry.TelemetryClient) *WebhookHandler {
+type webhookEventMeta struct {
+	EventID       string
+	CorrelationID string
+	EventType     string
+	SentAt        string
+}
+
+func NewWebhookHandler(cfg *config.Config, tClient *telemetry.TelemetryClient, store *storage.DecisionStore) *WebhookHandler {
 	forwardURLs := parseForwardURLs(cfg)
+	maxInFlight := cfg.Webhook.MaxInFlight
+	if maxInFlight <= 0 {
+		maxInFlight = 32
+	}
 
 	h := &WebhookHandler{
 		telemetryClient: tClient,
+		decisionStore:   store,
 		cfg:             cfg,
 		forwardURLs:     forwardURLs,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		processingSem: make(chan struct{}, maxInFlight),
 	}
 
 	if len(forwardURLs) > 0 {
@@ -175,6 +216,32 @@ func parseForwardURLs(cfg *config.Config) []string {
 	return urls
 }
 
+// HandleWebhookStatus returns operational status and counters for graph webhook processing.
+func (h *WebhookHandler) HandleWebhookStatus(w http.ResponseWriter, r *http.Request) {
+	stats := map[string]interface{}{
+		"received_total":      atomic.LoadUint64(&h.stats.received),
+		"accepted_total":      atomic.LoadUint64(&h.stats.accepted),
+		"duplicates_total":    atomic.LoadUint64(&h.stats.duplicates),
+		"failed_total":        atomic.LoadUint64(&h.stats.failed),
+		"forwarded_total":     atomic.LoadUint64(&h.stats.forwarded),
+		"retry_total":         atomic.LoadUint64(&h.stats.retried),
+		"processed_total":     atomic.LoadUint64(&h.stats.processed),
+		"in_flight":           len(h.processingSem),
+		"max_in_flight":       cap(h.processingSem),
+		"process_latency_avg": 0.0,
+	}
+	processed := atomic.LoadUint64(&h.stats.processed)
+	if processed > 0 {
+		totalLatency := atomic.LoadUint64(&h.stats.processLatencyMsTotal)
+		stats["process_latency_avg"] = float64(totalLatency) / float64(processed)
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"subscribers": h.forwardURLs,
+		"stats":       stats,
+	})
+}
+
 // HandleGraphUpdate is the HTTP handler for POST /webhook/graph-update
 func (h *WebhookHandler) HandleGraphUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -182,21 +249,67 @@ func (h *WebhookHandler) HandleGraphUpdate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if !h.allowInboundWebhook() {
+		atomic.AddUint64(&h.stats.failed, 1)
+		respondError(w, http.StatusTooManyRequests, "Webhook rate limit exceeded")
+		return
+	}
+
 	// Read body
 	body, err := io.ReadAll(io.LimitReader(r.Body, 10*1024*1024)) // 10MB limit
 	if err != nil {
+		atomic.AddUint64(&h.stats.failed, 1)
 		log.Printf("[Webhook] Failed to read body: %v", err)
 		respondError(w, http.StatusBadRequest, "Failed to read request body")
 		return
 	}
 	defer r.Body.Close()
+	atomic.AddUint64(&h.stats.received, 1)
 
-	// Verify HMAC signature if secret is configured
+	timestampHeader := r.Header.Get("X-Webhook-Timestamp")
+	signatureHeader := r.Header.Get("X-Webhook-Signature")
+	incomingCorrelationID := r.Header.Get("X-Correlation-Id")
+	incomingEventID := r.Header.Get("X-Webhook-Id")
+
+	// Verify HMAC signature and replay window if secret is configured.
 	if h.cfg.Webhook.Secret != "" {
-		sig := r.Header.Get("X-Webhook-Signature")
-		if !verifySignature(body, sig, h.cfg.Webhook.Secret) {
+		ok, verifyErr := verifyIncomingSignature(
+			body,
+			signatureHeader,
+			timestampHeader,
+			h.cfg.Webhook.Secret,
+			h.cfg.Webhook.AcceptLegacySignature,
+		)
+		if verifyErr != nil {
+			atomic.AddUint64(&h.stats.failed, 1)
+			log.Printf("[Webhook] Signature verification failed: %v", verifyErr)
+			respondError(w, http.StatusBadRequest, verifyErr.Error())
+			return
+		}
+		if !ok {
+			atomic.AddUint64(&h.stats.failed, 1)
 			log.Println("[Webhook] Invalid signature - rejecting request")
 			respondError(w, http.StatusUnauthorized, "Invalid webhook signature")
+			return
+		}
+
+		if timestampHeader != "" {
+			replayOK, replayErr := isWithinReplayWindow(timestampHeader, h.cfg.Webhook.ReplayWindowSec)
+			if replayErr != nil {
+				atomic.AddUint64(&h.stats.failed, 1)
+				log.Printf("[Webhook] Invalid webhook timestamp: %v", replayErr)
+				respondError(w, http.StatusBadRequest, "Invalid webhook timestamp")
+				return
+			}
+			if !replayOK {
+				atomic.AddUint64(&h.stats.failed, 1)
+				log.Printf("[Webhook] Replay window exceeded timestamp=%s", timestampHeader)
+				respondError(w, http.StatusUnauthorized, "Webhook timestamp outside replay window")
+				return
+			}
+		} else if !h.cfg.Webhook.AcceptLegacySignature {
+			atomic.AddUint64(&h.stats.failed, 1)
+			respondError(w, http.StatusBadRequest, "Missing X-Webhook-Timestamp")
 			return
 		}
 	}
@@ -204,70 +317,183 @@ func (h *WebhookHandler) HandleGraphUpdate(w http.ResponseWriter, r *http.Reques
 	// Parse payload
 	var payload WebhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
+		atomic.AddUint64(&h.stats.failed, 1)
 		log.Printf("[Webhook] Invalid JSON payload: %v", err)
 		respondError(w, http.StatusBadRequest, "Invalid JSON payload")
 		return
 	}
 
 	if payload.Event != "graph_update" {
+		atomic.AddUint64(&h.stats.failed, 1)
 		respondError(w, http.StatusBadRequest, fmt.Sprintf("Unknown event type: %s", payload.Event))
 		return
 	}
 
-	log.Printf("[Webhook] Received graph_update with %d services, %d edges",
+	if !h.tryAcquireProcessingSlot() {
+		atomic.AddUint64(&h.stats.failed, 1)
+		respondError(w, http.StatusServiceUnavailable, "Webhook processor is busy")
+		return
+	}
+
+	eventID := payload.EventID
+	if eventID == "" {
+		eventID = incomingEventID
+	}
+	if eventID == "" {
+		eventID = buildLegacyEventID(body)
+	}
+	correlationID := payload.CorrelationID
+	if correlationID == "" {
+		correlationID = incomingCorrelationID
+	}
+	if correlationID == "" {
+		correlationID = eventID
+	}
+	sentAt := payload.SentAt
+	if sentAt == "" {
+		sentAt = payload.Timestamp
+	}
+	if sentAt == "" {
+		sentAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	meta := webhookEventMeta{
+		EventID:       eventID,
+		CorrelationID: correlationID,
+		EventType:     payload.Event,
+		SentAt:        sentAt,
+	}
+
+	dedupeWindow := time.Duration(h.cfg.Webhook.DedupeWindowSec) * time.Second
+	if dedupeWindow <= 0 {
+		dedupeWindow = 24 * time.Hour
+	}
+	if h.decisionStore == nil {
+		h.releaseProcessingSlot()
+		atomic.AddUint64(&h.stats.failed, 1)
+		log.Printf("[Webhook] Durable acceptance unavailable eventId=%s correlationId=%s", meta.EventID, meta.CorrelationID)
+		respondError(w, http.StatusServiceUnavailable, "Webhook storage unavailable")
+		return
+	}
+
+	isDuplicate, err := h.decisionStore.RegisterWebhookEvent(
+		meta.EventID,
+		hashBytesHex(body),
+		"service-graph-engine",
+		meta.CorrelationID,
+		meta.EventType,
+		dedupeWindow,
+	)
+	if err != nil {
+		h.releaseProcessingSlot()
+		if errors.Is(err, storage.ErrWebhookEventHashConflict) {
+			atomic.AddUint64(&h.stats.failed, 1)
+			log.Printf("[Webhook] Event hash conflict eventId=%s correlationId=%s", meta.EventID, meta.CorrelationID)
+			respondError(w, http.StatusBadRequest, "Webhook event ID conflict")
+			return
+		}
+
+		atomic.AddUint64(&h.stats.failed, 1)
+		log.Printf("[Webhook] Durable acceptance failed eventId=%s correlationId=%s error=%v", meta.EventID, meta.CorrelationID, err)
+		respondError(w, http.StatusServiceUnavailable, "Failed to durably accept webhook")
+		return
+	}
+
+	if isDuplicate {
+		h.releaseProcessingSlot()
+		atomic.AddUint64(&h.stats.duplicates, 1)
+		log.Printf("[Webhook] Duplicate event ignored eventId=%s correlationId=%s", meta.EventID, meta.CorrelationID)
+		respondJSON(w, http.StatusOK, map[string]interface{}{
+			"success":     true,
+			"duplicate":   true,
+			"eventId":     meta.EventID,
+			"correlation": meta.CorrelationID,
+			"message":     "Duplicate webhook ignored",
+		})
+		return
+	}
+
+	log.Printf("[Webhook] Accepted event=%s correlationId=%s graph_update with %d services, %d edges",
+		meta.EventID,
+		meta.CorrelationID,
 		len(payload.Data.MetricsSnapshot.Services),
 		len(payload.Data.MetricsSnapshot.Edges))
 
-	// Process data asynchronously to respond quickly (202 Accepted)
-	go h.processWebhookData(payload, body)
+	atomic.AddUint64(&h.stats.accepted, 1)
+
+	// Process data asynchronously after durable acceptance.
+	go h.processWebhookData(payload, body, meta)
 
 	respondJSON(w, http.StatusAccepted, map[string]interface{}{
-		"success": true,
-		"message": "Graph update accepted",
+		"success":       true,
+		"eventId":       meta.EventID,
+		"correlationId": meta.CorrelationID,
+		"message":       "Graph update accepted",
 	})
 }
 
 // processWebhookData handles the actual data processing in a goroutine.
-func (h *WebhookHandler) processWebhookData(payload WebhookPayload, rawBody []byte) {
+func (h *WebhookHandler) processWebhookData(payload WebhookPayload, rawBody []byte, meta webhookEventMeta) {
+	defer h.releaseProcessingSlot()
+	startedAt := time.Now()
+
+	processTimeout := time.Duration(h.cfg.Webhook.ProcessTimeoutMs) * time.Millisecond
+	if processTimeout <= 0 {
+		processTimeout = 15 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), processTimeout)
+	defer cancel()
+
 	data := payload.Data
 
 	// 1. Write telemetry metrics to InfluxDB (same logic as PollWorker.poll)
-	h.writeTelemetryMetrics(data)
+	h.writeTelemetryMetrics(ctx, data, meta)
 
 	// 2. Cache latest data for API consumers
 	h.cacheLatestData(data)
 
 	// 3. Forward to dashboard BFF webhook subscribers
-	h.forwardToSubscribers(rawBody)
+	h.forwardToSubscribers(ctx, rawBody, meta)
 
-	log.Printf("[Webhook] Processing complete: %d services, %d edges",
+	if ctx.Err() != nil {
+		atomic.AddUint64(&h.stats.failed, 1)
+		log.Printf("[Webhook] Processing timeout eventId=%s correlationId=%s: %v", meta.EventID, meta.CorrelationID, ctx.Err())
+		return
+	}
+
+	atomic.AddUint64(&h.stats.processed, 1)
+	atomic.AddUint64(&h.stats.processLatencyMsTotal, uint64(time.Since(startedAt).Milliseconds()))
+
+	log.Printf("[Webhook] Processing complete eventId=%s correlationId=%s: %d services, %d edges",
+		meta.EventID,
+		meta.CorrelationID,
 		len(data.MetricsSnapshot.Services),
 		len(data.MetricsSnapshot.Edges))
 }
 
 // writeTelemetryMetrics writes received metrics to InfluxDB (replaces PollWorker logic).
-func (h *WebhookHandler) writeTelemetryMetrics(data GraphData) {
+func (h *WebhookHandler) writeTelemetryMetrics(ctx context.Context, data GraphData, meta webhookEventMeta) {
 	servicePoints := buildServicePoints(data.MetricsSnapshot.Services)
 	edgePoints := buildEdgePoints(data.MetricsSnapshot.Edges)
 	nodePoints, podPoints := buildInfraPoints(data.Services)
 
-	ctx := context.Background()
-
 	if len(servicePoints) > 0 {
 		if err := h.telemetryClient.WriteServiceMetrics(ctx, servicePoints); err != nil {
-			log.Printf("[Webhook] Write service metrics failed: %v", err)
+			atomic.AddUint64(&h.stats.failed, 1)
+			log.Printf("[Webhook] Write service metrics failed eventId=%s correlationId=%s: %v", meta.EventID, meta.CorrelationID, err)
 		}
 	}
 
 	if len(edgePoints) > 0 {
 		if err := h.telemetryClient.WriteEdgeMetrics(ctx, edgePoints); err != nil {
-			log.Printf("[Webhook] Write edge metrics failed: %v", err)
+			atomic.AddUint64(&h.stats.failed, 1)
+			log.Printf("[Webhook] Write edge metrics failed eventId=%s correlationId=%s: %v", meta.EventID, meta.CorrelationID, err)
 		}
 	}
 
 	if len(nodePoints) > 0 {
 		if err := h.telemetryClient.WriteInfrastructureMetrics(ctx, nodePoints, podPoints); err != nil {
-			log.Printf("[Webhook] Write infra metrics failed: %v", err)
+			atomic.AddUint64(&h.stats.failed, 1)
+			log.Printf("[Webhook] Write infra metrics failed eventId=%s correlationId=%s: %v", meta.EventID, meta.CorrelationID, err)
 		}
 	}
 }
@@ -570,53 +796,280 @@ func (h *WebhookHandler) GetLatestSnapshot() *CachedGraphData {
 }
 
 // forwardToSubscribers forwards the raw webhook payload to dashboard BFF and other subscribers.
-func (h *WebhookHandler) forwardToSubscribers(rawBody []byte) {
+func (h *WebhookHandler) forwardToSubscribers(ctx context.Context, rawBody []byte, meta webhookEventMeta) {
 	if len(h.forwardURLs) == 0 {
 		return
 	}
 
-	for _, url := range h.forwardURLs {
-		go func(targetURL string) {
-			req, err := http.NewRequest("POST", targetURL, bytes.NewReader(rawBody))
-			if err != nil {
-				log.Printf("[Webhook] Failed to create forward request to %s: %v", targetURL, err)
-				return
-			}
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("X-Webhook-Event", "graph_update")
-			req.Header.Set("X-Forwarded-From", "analysis-engine")
-
-			resp, err := h.httpClient.Do(req)
-			if err != nil {
-				log.Printf("[Webhook] Failed to forward to %s: %v", targetURL, err)
-				return
-			}
-			defer resp.Body.Close()
-			log.Printf("[Webhook] Forwarded to %s (status %d)", targetURL, resp.StatusCode)
-		}(url)
+	for _, targetURL := range h.forwardURLs {
+		if err := h.forwardWithRetry(ctx, targetURL, rawBody, meta); err != nil {
+			atomic.AddUint64(&h.stats.failed, 1)
+			log.Printf(
+				"[Webhook] Forward failed eventId=%s correlationId=%s target=%s: %v",
+				meta.EventID,
+				meta.CorrelationID,
+				targetURL,
+				err,
+			)
+		}
 	}
 }
 
-// verifySignature validates the HMAC SHA-256 signature.
-func verifySignature(body []byte, signatureHeader, secret string) bool {
+func (h *WebhookHandler) forwardWithRetry(ctx context.Context, targetURL string, rawBody []byte, meta webhookEventMeta) error {
+	maxAttempts := h.cfg.Webhook.ForwardRetryMax
+	if maxAttempts <= 0 {
+		maxAttempts = 5
+	}
+	baseDelayMs := h.cfg.Webhook.ForwardRetryBaseMs
+	if baseDelayMs <= 0 {
+		baseDelayMs = 250
+	}
+	maxDelayMs := h.cfg.Webhook.ForwardRetryMaxMs
+	if maxDelayMs <= 0 {
+		maxDelayMs = 5000
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		timestampHeader := strconv.FormatInt(time.Now().UTC().Unix(), 10)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(rawBody))
+		if err != nil {
+			return fmt.Errorf("create request failed: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Webhook-Event", "graph_update")
+		req.Header.Set("X-Forwarded-From", "analysis-engine")
+		req.Header.Set("X-Webhook-Id", meta.EventID)
+		req.Header.Set("X-Correlation-Id", meta.CorrelationID)
+		req.Header.Set("X-Webhook-Timestamp", timestampHeader)
+
+		signingSecret := h.cfg.Webhook.ForwardSecret
+		if signingSecret == "" {
+			signingSecret = h.cfg.Webhook.Secret
+		}
+		if signingSecret != "" {
+			signature := signPayloadWithTimestamp(rawBody, timestampHeader, signingSecret)
+			req.Header.Set("X-Webhook-Signature", fmt.Sprintf("sha256=%s", signature))
+		}
+
+		resp, err := h.httpClient.Do(req)
+		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+
+		if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			atomic.AddUint64(&h.stats.forwarded, 1)
+			log.Printf(
+				"[Webhook] Forwarded eventId=%s correlationId=%s target=%s status=%d",
+				meta.EventID,
+				meta.CorrelationID,
+				targetURL,
+				resp.StatusCode,
+			)
+			return nil
+		}
+
+		retryable := false
+		if err != nil {
+			retryable = isRetryableForwardError(err)
+			lastErr = err
+		} else {
+			retryable = isRetryableStatusCode(resp.StatusCode)
+			lastErr = fmt.Errorf("status %d", resp.StatusCode)
+		}
+
+		if !retryable || attempt >= maxAttempts {
+			break
+		}
+
+		atomic.AddUint64(&h.stats.retried, 1)
+		delay := calculateBackoffDelay(attempt, baseDelayMs, maxDelayMs)
+		log.Printf(
+			"[Webhook] Retrying forward eventId=%s correlationId=%s target=%s attempt=%d/%d delay=%s",
+			meta.EventID,
+			meta.CorrelationID,
+			targetURL,
+			attempt+1,
+			maxAttempts,
+			delay.String(),
+		)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+
+	return lastErr
+}
+
+func signPayloadWithTimestamp(body []byte, timestampHeader, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestampHeader))
+	mac.Write([]byte("."))
+	mac.Write(body)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func verifyIncomingSignature(body []byte, signatureHeader, timestampHeader, secret string, acceptLegacy bool) (bool, error) {
 	if signatureHeader == "" {
-		return false
+		return false, nil
 	}
 
 	// Expect "sha256=<hex>"
 	parts := strings.SplitN(signatureHeader, "=", 2)
 	if len(parts) != 2 || parts[0] != "sha256" {
-		return false
+		return false, nil
 	}
 
 	expectedMAC, err := hex.DecodeString(parts[1])
 	if err != nil {
-		return false
+		return false, nil
 	}
 
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
+	if timestampHeader != "" {
+		mac.Write([]byte(timestampHeader))
+		mac.Write([]byte("."))
+		mac.Write(body)
+	} else {
+		if !acceptLegacy {
+			return false, nil
+		}
+		// Legacy compatibility mode signs body only.
+		mac.Write(body)
+	}
 	actualMAC := mac.Sum(nil)
 
-	return hmac.Equal(actualMAC, expectedMAC)
+	return hmac.Equal(actualMAC, expectedMAC), nil
+}
+
+func isWithinReplayWindow(timestampHeader string, replayWindowSec int) (bool, error) {
+	if replayWindowSec <= 0 {
+		replayWindowSec = 300
+	}
+	sentAt, err := parseWebhookTimestamp(timestampHeader)
+	if err != nil {
+		return false, err
+	}
+
+	maxSkew := time.Duration(replayWindowSec) * time.Second
+	diff := time.Since(sentAt)
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff <= maxSkew, nil
+}
+
+func parseWebhookTimestamp(raw string) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, fmt.Errorf("missing timestamp")
+	}
+
+	if sec, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		// Support both epoch seconds and epoch milliseconds.
+		if sec > 9999999999 {
+			return time.UnixMilli(sec).UTC(), nil
+		}
+		return time.Unix(sec, 0).UTC(), nil
+	}
+
+	if ts, err := time.Parse(time.RFC3339, raw); err == nil {
+		return ts.UTC(), nil
+	}
+
+	return time.Time{}, fmt.Errorf("unsupported timestamp format")
+}
+
+func hashBytesHex(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+func buildLegacyEventID(body []byte) string {
+	sum := hashBytesHex(body)
+	if len(sum) > 20 {
+		sum = sum[:20]
+	}
+	return fmt.Sprintf("legacy_%s", sum)
+}
+
+func (h *WebhookHandler) allowInboundWebhook() bool {
+	limit := h.cfg.RateLimit.MaxRequests
+	windowMs := h.cfg.RateLimit.WindowMs
+	if limit <= 0 || windowMs <= 0 {
+		return true
+	}
+
+	h.rlMu.Lock()
+	defer h.rlMu.Unlock()
+
+	now := time.Now()
+	windowDuration := time.Duration(windowMs) * time.Millisecond
+	if h.rlWindowStart.IsZero() || now.Sub(h.rlWindowStart) >= windowDuration {
+		h.rlWindowStart = now
+		h.rlCount = 0
+	}
+
+	if h.rlCount >= limit {
+		return false
+	}
+	h.rlCount++
+	return true
+}
+
+func (h *WebhookHandler) tryAcquireProcessingSlot() bool {
+	select {
+	case h.processingSem <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *WebhookHandler) releaseProcessingSlot() {
+	select {
+	case <-h.processingSem:
+	default:
+	}
+}
+
+func isRetryableStatusCode(statusCode int) bool {
+	return statusCode == http.StatusTooManyRequests || statusCode >= 500
+}
+
+func isRetryableForwardError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "no such host") ||
+		strings.Contains(msg, "temporary")
+}
+
+func calculateBackoffDelay(attempt, baseDelayMs, maxDelayMs int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	if baseDelayMs <= 0 {
+		baseDelayMs = 250
+	}
+	if maxDelayMs <= 0 {
+		maxDelayMs = 5000
+	}
+
+	delay := baseDelayMs * (1 << (attempt - 1))
+	if delay > maxDelayMs {
+		delay = maxDelayMs
+	}
+	// Add up to 25% jitter.
+	jitter := delay / 4
+	if jitter > 0 {
+		delay += int(time.Now().UnixNano() % int64(jitter+1))
+	}
+	return time.Duration(delay) * time.Millisecond
 }

@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 type DecisionStore struct {
 	db *sql.DB
 }
+
+var ErrWebhookEventHashConflict = errors.New("webhook event hash conflict")
 
 // NewDecisionStore initializes the SQLite database and ensures schema availability.
 func NewDecisionStore(dbPath string) (*DecisionStore, error) {
@@ -62,6 +65,18 @@ func (s *DecisionStore) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_decisions_timestamp ON decisions(timestamp DESC);
 	CREATE INDEX IF NOT EXISTS idx_decisions_type ON decisions(type);
 	CREATE INDEX IF NOT EXISTS idx_decisions_correlation_id ON decisions(correlation_id);
+
+	CREATE TABLE IF NOT EXISTS webhook_events (
+		event_id TEXT PRIMARY KEY,
+		event_hash TEXT NOT NULL,
+		source TEXT,
+		correlation_id TEXT,
+		event_type TEXT,
+		first_seen_at TEXT NOT NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_webhook_events_first_seen_at ON webhook_events(first_seen_at);
+	CREATE INDEX IF NOT EXISTS idx_webhook_events_source ON webhook_events(source);
 	`
 	_, err := s.db.Exec(schema)
 	if err != nil {
@@ -211,4 +226,74 @@ func (s *DecisionStore) GetCount(decisionType string) (int, error) {
 		return 0, fmt.Errorf("failed to count decisions: %w", err)
 	}
 	return count, nil
+}
+
+// RegisterWebhookEvent stores a webhook event ID for idempotency and returns whether it is a duplicate.
+// Old rows outside the dedupe window are pruned during registration.
+func (s *DecisionStore) RegisterWebhookEvent(
+	eventID, eventHash, source, correlationID, eventType string,
+	dedupeWindow time.Duration,
+) (bool, error) {
+	if eventID == "" {
+		return false, fmt.Errorf("event ID is required")
+	}
+	if eventHash == "" {
+		return false, fmt.Errorf("event hash is required")
+	}
+	if dedupeWindow <= 0 {
+		dedupeWindow = 24 * time.Hour
+	}
+
+	now := time.Now().UTC()
+	firstSeenAt := now.Format(time.RFC3339)
+	cutoff := now.Add(-dedupeWindow).Format(time.RFC3339)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, fmt.Errorf("failed to begin webhook registration tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	if _, err := tx.Exec(`DELETE FROM webhook_events WHERE first_seen_at < ?`, cutoff); err != nil {
+		return false, fmt.Errorf("failed to prune webhook dedupe window: %w", err)
+	}
+
+	res, err := tx.Exec(
+		`INSERT OR IGNORE INTO webhook_events (event_id, event_hash, source, correlation_id, event_type, first_seen_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		eventID, eventHash, source, correlationID, eventType, firstSeenAt,
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to insert webhook event: %w", err)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to inspect webhook registration result: %w", err)
+	}
+
+	isDuplicate := rowsAffected == 0
+	if isDuplicate {
+		var existingHash string
+		if err := tx.QueryRow(
+			`SELECT event_hash FROM webhook_events WHERE event_id = ?`,
+			eventID,
+		).Scan(&existingHash); err != nil {
+			return false, fmt.Errorf("failed to load existing webhook event hash: %w", err)
+		}
+		if existingHash != eventHash {
+			if err := tx.Commit(); err != nil {
+				return false, fmt.Errorf("failed to commit hash-conflict webhook tx: %w", err)
+			}
+			return true, ErrWebhookEventHashConflict
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("failed to commit webhook registration tx: %w", err)
+	}
+
+	return isDuplicate, nil
 }

@@ -62,9 +62,18 @@ type TelemetryConfig struct {
 }
 
 type WebhookConfig struct {
-	Enabled     bool
-	Secret      string
-	ForwardURLs string
+	Enabled               bool
+	Secret                string
+	ForwardSecret         string
+	ForwardURLs           string
+	ReplayWindowSec       int
+	DedupeWindowSec       int
+	ForwardRetryMax       int
+	ForwardRetryBaseMs    int
+	ForwardRetryMaxMs     int
+	MaxInFlight           int
+	ProcessTimeoutMs      int
+	AcceptLegacySignature bool
 }
 
 func Load() (*Config, error) {
@@ -105,9 +114,18 @@ func Load() (*Config, error) {
 			Enabled: getEnv("TELEMETRY_ENABLED", "true") != "false",
 		},
 		Webhook: WebhookConfig{
-			Enabled:     getEnv("WEBHOOK_ENABLED", "true") != "false",
-			Secret:      getEnv("WEBHOOK_SECRET", ""),
-			ForwardURLs: getEnv("WEBHOOK_FORWARD_URLS", ""),
+			Enabled:               getEnv("WEBHOOK_ENABLED", "true") != "false",
+			Secret:                getEnv("WEBHOOK_SECRET", ""),
+			ForwardSecret:         getEnv("WEBHOOK_FORWARD_SECRET", ""),
+			ForwardURLs:           getEnv("WEBHOOK_FORWARD_URLS", ""),
+			ReplayWindowSec:       getEnvInt("WEBHOOK_REPLAY_WINDOW_SEC", 300),
+			DedupeWindowSec:       getEnvInt("WEBHOOK_DEDUPE_WINDOW_SEC", 86400),
+			ForwardRetryMax:       getEnvInt("WEBHOOK_FORWARD_RETRY_MAX", 5),
+			ForwardRetryBaseMs:    getEnvInt("WEBHOOK_FORWARD_RETRY_BASE_DELAY_MS", 250),
+			ForwardRetryMaxMs:     getEnvInt("WEBHOOK_FORWARD_RETRY_MAX_DELAY_MS", 5000),
+			MaxInFlight:           getEnvInt("WEBHOOK_MAX_IN_FLIGHT", 32),
+			ProcessTimeoutMs:      getEnvInt("WEBHOOK_PROCESS_TIMEOUT_MS", 15000),
+			AcceptLegacySignature: getEnv("WEBHOOK_ACCEPT_LEGACY_SIGNATURE", "true") != "false",
 		},
 	}
 

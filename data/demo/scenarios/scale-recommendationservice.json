@@ -1,0 +1,101 @@
+{
+  "target": {
+    "serviceId": "default:recommendationservice",
+    "name": "recommendationservice",
+    "namespace": "default"
+  },
+  "neighborhood": {
+    "description": "k-hop upstream subgraph around target (seeded demo snapshot)",
+    "serviceCount": 4,
+    "edgeCount": 4,
+    "depthUsed": 2,
+    "generatedAt": "2026-02-19T00:00:00Z"
+  },
+  "requestNormalized": {
+    "serviceId": "default:recommendationservice",
+    "graphLookupKey": "recommendationservice",
+    "depthUsed": 2
+  },
+  "dataFreshness": {
+    "source": "demo-snapshot",
+    "stale": false,
+    "lastUpdatedSecondsAgo": 12,
+    "windowMinutes": 5
+  },
+  "confidence": "high",
+  "explanation": "Scaling recommendationservice up from 2 to 5 pods improves latency by 28.4ms (baseline: 142.8ms to projected: 114.4ms). 2 upstream caller(s) affected across 2 path(s).",
+  "warnings": [],
+  "latencyMetric": "p95",
+  "scalingModel": {
+    "type": "bounded_sqrt",
+    "alpha": 0.5
+  },
+  "currentPods": 2,
+  "newPods": 5,
+  "latencyEstimate": {
+    "description": "Rate-weighted mean of incoming edge latency to target",
+    "baselineMs": 142.8,
+    "projectedMs": 114.4,
+    "deltaMs": -28.4,
+    "unit": "milliseconds"
+  },
+  "scalingDirection": "up",
+  "affectedCallers": {
+    "description": "Edge-level impact and path-level deltas",
+    "items": [
+      {
+        "serviceId": "default:checkoutservice",
+        "name": "checkoutservice",
+        "namespace": "default",
+        "hopDistance": 1,
+        "beforeMs": 142.8,
+        "afterMs": 114.4,
+        "deltaMs": -28.4,
+        "endToEndBeforeMs": 329,
+        "endToEndAfterMs": 300.6,
+        "endToEndDeltaMs": -28.4,
+        "viaPath": ["default:frontend", "default:checkoutservice", "default:recommendationservice"]
+      },
+      {
+        "serviceId": "default:frontend",
+        "name": "frontend",
+        "namespace": "default",
+        "hopDistance": 2,
+        "beforeMs": 164.5,
+        "afterMs": 150.3,
+        "deltaMs": -14.2,
+        "endToEndBeforeMs": 329,
+        "endToEndAfterMs": 300.6,
+        "endToEndDeltaMs": -28.4,
+        "viaPath": ["default:frontend", "default:checkoutservice", "default:recommendationservice"]
+      }
+    ]
+  },
+  "affectedPaths": [
+    {
+      "path": ["default:frontend", "default:checkoutservice", "default:recommendationservice"],
+      "pathRps": 64.7,
+      "beforeMs": 329,
+      "afterMs": 300.6,
+      "deltaMs": -28.4,
+      "incompleteData": false
+    },
+    {
+      "path": ["default:cartservice", "default:checkoutservice", "default:recommendationservice"],
+      "pathRps": 22.5,
+      "beforeMs": 352.1,
+      "afterMs": 323.7,
+      "deltaMs": -28.4,
+      "incompleteData": false
+    }
+  ],
+  "recommendations": [
+    {
+      "type": "scaling",
+      "priority": "medium",
+      "description": "Monitor recommendationservice CPU after scaling to maintain latency gains."
+    }
+  ],
+  "sourceMode": "demo",
+  "snapshotId": "seed-v1"
+}

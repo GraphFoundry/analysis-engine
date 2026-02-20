@@ -1,4 +1,24 @@
-node_modules
-*.log
+analysis-engine
+!analysis-engine/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Config
+.env
 .DS_Store
-data/
+
+# IDEs
+.vscode/
+.idea/
+
+# SQLite
+data/*.db*

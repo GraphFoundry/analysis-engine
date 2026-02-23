@@ -28,9 +28,9 @@ type ServiceMetric struct {
 	Service      string   `json:"service"`
 	Namespace    string   `json:"namespace"`
 	RequestRate  float64  `json:"requestRate"`
-	ErrorRate    float64  `json:"errorRate"`
+	ErrorRate    *float64 `json:"errorRate"`
 	P50          *float64 `json:"p50"`
-	P95          float64  `json:"p95"`
+	P95          *float64 `json:"p95"`
 	P99          *float64 `json:"p99"`
 	Availability *float64 `json:"availability"`
 }
@@ -206,6 +206,7 @@ func (c *TelemetryClient) GetServiceMetrics(ctx context.Context, service string,
 	}
 
 	var metrics []ServiceMetric
+	preserveSparseNulls := service == ""
 
 	for _, result := range res.Results {
 		for _, series := range result.Series {
@@ -219,65 +220,9 @@ func (c *TelemetryClient) GetServiceMetrics(ctx context.Context, service string,
 			}
 
 			for _, row := range series.Values {
-
-				if len(row) != len(series.Columns) {
+				m, ok := parseServiceMetricRow(series.Columns, colMap, row, svcName, namespace, preserveSparseNulls)
+				if !ok {
 					continue
-				}
-
-				getFloat := func(name string) float64 {
-					idx, ok := colMap[name]
-					if !ok || row[idx] == nil {
-						return 0
-					}
-
-					if f, ok := row[idx].(float64); ok {
-						return f
-					}
-
-					return 0
-				}
-
-				getOptionalFloat := func(name string) *float64 {
-					idx, ok := colMap[name]
-					if !ok || row[idx] == nil {
-						return nil
-					}
-
-					if f, ok := row[idx].(float64); ok {
-						v := f
-						return &v
-					}
-
-					return nil
-				}
-
-				getTime := func() string {
-					idx, ok := colMap["time"]
-					if !ok || row[idx] == nil {
-						return ""
-					}
-
-					if s, ok := row[idx].(string); ok {
-						return s
-					}
-
-					if f, ok := row[idx].(float64); ok {
-						t := time.Unix(0, int64(f))
-						return t.Format(time.RFC3339)
-					}
-					return ""
-				}
-
-				m := ServiceMetric{
-					Timestamp:    getTime(),
-					Service:      svcName,
-					Namespace:    namespace,
-					RequestRate:  getFloat("avg_request_rate"),
-					ErrorRate:    getFloat("avg_error_rate"),
-					P50:          getOptionalFloat("avg_p50"),
-					P95:          getFloat("avg_p95"),
-					P99:          getOptionalFloat("avg_p99"),
-					Availability: getOptionalFloat("avg_availability"),
 				}
 				metrics = append(metrics, m)
 			}
@@ -285,6 +230,83 @@ func (c *TelemetryClient) GetServiceMetrics(ctx context.Context, service string,
 	}
 
 	return metrics, nil
+}
+
+func parseServiceMetricRow(columns []string, colMap map[string]int, row []interface{}, svcName, namespace string, preserveSparseNulls bool) (ServiceMetric, bool) {
+	if len(row) != len(columns) {
+		return ServiceMetric{}, false
+	}
+
+	getFloat := func(name string) float64 {
+		idx, ok := colMap[name]
+		if !ok || row[idx] == nil {
+			return 0
+		}
+
+		if f, ok := row[idx].(float64); ok {
+			return f
+		}
+
+		return 0
+	}
+
+	getOptionalFloat := func(name string) *float64 {
+		idx, ok := colMap[name]
+		if !ok || row[idx] == nil {
+			return nil
+		}
+
+		if f, ok := row[idx].(float64); ok {
+			v := f
+			return &v
+		}
+
+		return nil
+	}
+
+	getFloatPtrOrZero := func(name string) *float64 {
+		if v := getOptionalFloat(name); v != nil {
+			return v
+		}
+		zero := 0.0
+		return &zero
+	}
+
+	getTime := func() string {
+		idx, ok := colMap["time"]
+		if !ok || row[idx] == nil {
+			return ""
+		}
+
+		if s, ok := row[idx].(string); ok {
+			return s
+		}
+
+		if f, ok := row[idx].(float64); ok {
+			t := time.Unix(0, int64(f))
+			return t.Format(time.RFC3339)
+		}
+		return ""
+	}
+
+	errorRate := getFloatPtrOrZero("avg_error_rate")
+	p95 := getFloatPtrOrZero("avg_p95")
+	if preserveSparseNulls {
+		errorRate = getOptionalFloat("avg_error_rate")
+		p95 = getOptionalFloat("avg_p95")
+	}
+
+	return ServiceMetric{
+		Timestamp:    getTime(),
+		Service:      svcName,
+		Namespace:    namespace,
+		RequestRate:  getFloat("avg_request_rate"),
+		ErrorRate:    errorRate,
+		P50:          getOptionalFloat("avg_p50"),
+		P95:          p95,
+		P99:          getOptionalFloat("avg_p99"),
+		Availability: getOptionalFloat("avg_availability"),
+	}, true
 }
 
 func (c *TelemetryClient) GetEdgeMetrics(ctx context.Context, fromSvc, toSvc, from, to string, stepSeconds int) ([]EdgeMetric, error) {

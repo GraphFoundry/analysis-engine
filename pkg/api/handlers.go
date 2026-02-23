@@ -536,6 +536,18 @@ func (h *Handler) SimulationCapabilitiesHandler(w http.ResponseWriter, r *http.R
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"enabled":      []string{"failure", "scale"},
 		"experimental": []string{"add-service"},
+		"demoConstraints": map[string]interface{}{
+			"note":                "Demo Snapshot Mode uses deterministic fixtures and supports a curated subset of scenarios.",
+			"addServiceSupported": false,
+			"failure": map[string]interface{}{
+				"serviceId": demoFailureServiceID,
+			},
+			"scale": map[string]interface{}{
+				"serviceId":   demoScaleServiceID,
+				"currentPods": demoScaleExpectedPods,
+				"newPods":     demoScaleProjectedPods,
+			},
+		},
 	})
 }
 

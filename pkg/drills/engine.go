@@ -170,9 +170,12 @@ func NewEngine(store *storage.DecisionStore, graphClient *graph.Client, telemetr
 		actionFactories: make(map[string]func() Action),
 	}
 	e.actionFactories["ServiceShutdown"] = func() Action { return NewScaleDeploymentAction(k8sClients) }
+	e.actionFactories["ServiceBrownout"] = func() Action { return NewScaleDeploymentAction(k8sClients) }
 	e.actionFactories["ScaleStress"] = func() Action { return NewScaleDeploymentAction(k8sClients) }
 	e.actionFactories["NetworkCut"] = func() Action { return NewNetworkPolicyAction(k8sClients) }
+	e.actionFactories["ExtendedNetworkCut"] = func() Action { return NewNetworkPolicyAction(k8sClients) }
 	e.actionFactories["TargetedLoad"] = func() Action { return NewTargetedLoadAction(opts.TargetedLoad, k8sClients) }
+	e.actionFactories["TrafficSpike"] = func() Action { return NewTargetedLoadAction(opts.TargetedLoad, k8sClients) }
 	return e
 }
 

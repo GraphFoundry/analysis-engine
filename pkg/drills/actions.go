@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -47,6 +49,53 @@ func (f *K8sClientFactory) Clientset() (*kubernetes.Clientset, error) {
 		return nil, err
 	}
 	return kubernetes.NewForConfig(restCfg)
+}
+
+func (f *K8sClientFactory) PreflightConnectivity(ctx context.Context) error {
+	clientset, restCfg, err := f.clientsetWithConfig()
+	if err != nil {
+		return wrapK8sPreflightError("load kubernetes client configuration", "", err)
+	}
+	if _, err := clientset.Discovery().ServerVersion(); err != nil {
+		return wrapK8sPreflightError("probe kubernetes api server", restCfg.Host, err)
+	}
+	return nil
+}
+
+func (f *K8sClientFactory) PreflightDeploymentAccess(ctx context.Context, namespace, deployment string) error {
+	clientset, restCfg, err := f.clientsetWithConfig()
+	if err != nil {
+		return wrapK8sPreflightError("load kubernetes client configuration", "", err)
+	}
+	if _, err := clientset.AppsV1().Deployments(namespace).Get(ctx, deployment, metav1.GetOptions{}); err != nil {
+		resource := fmt.Sprintf("read deployment %s/%s", namespace, deployment)
+		return wrapK8sPreflightError(resource, restCfg.Host, err)
+	}
+	return nil
+}
+
+func (f *K8sClientFactory) PreflightNamespaceAccess(ctx context.Context, namespace string) error {
+	clientset, restCfg, err := f.clientsetWithConfig()
+	if err != nil {
+		return wrapK8sPreflightError("load kubernetes client configuration", "", err)
+	}
+	if _, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{Limit: 1}); err != nil {
+		resource := fmt.Sprintf("read pods in namespace %s", namespace)
+		return wrapK8sPreflightError(resource, restCfg.Host, err)
+	}
+	return nil
+}
+
+func (f *K8sClientFactory) clientsetWithConfig() (*kubernetes.Clientset, *rest.Config, error) {
+	restCfg, err := f.restConfig()
+	if err != nil {
+		return nil, nil, err
+	}
+	clientset, err := kubernetes.NewForConfig(restCfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return clientset, restCfg, nil
 }
 
 func (f *K8sClientFactory) restConfig() (*rest.Config, error) {
@@ -121,6 +170,43 @@ func buildKubeconfigRestConfig(opts K8sClientOptions) (*rest.Config, error) {
 		cfg.Host = opts.APIServer
 	}
 	return cfg, nil
+}
+
+func wrapK8sPreflightError(operation, apiHost string, err error) error {
+	if err == nil {
+		return nil
+	}
+	base := fmt.Sprintf("drill preflight failed: unable to %s", operation)
+	if apiHost != "" {
+		base = fmt.Sprintf("%s via %s", base, apiHost)
+	}
+	if isLoopbackAPIHost(apiHost) && strings.Contains(strings.ToLower(err.Error()), "connect: connection refused") {
+		return fmt.Errorf(
+			"%s: %w (detected loopback kubernetes api endpoint; if this environment relies on an SSH tunnel, start the tunnel on the analysis-engine host or set DRILLS_KUBE_API_SERVER / DRILLS_KUBECONFIG_PATH to a reachable cluster endpoint before calling /drills/run)",
+			base,
+			err,
+		)
+	}
+	return fmt.Errorf("%s: %w", base, err)
+}
+
+func isLoopbackAPIHost(raw string) bool {
+	if strings.TrimSpace(raw) == "" {
+		return false
+	}
+	parsed, err := neturl.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func expandHomePath(path string) string {

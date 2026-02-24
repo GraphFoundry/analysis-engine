@@ -146,6 +146,7 @@ type Engine struct {
 	store           *storage.DecisionStore
 	graphClient     *graph.Client
 	telemetryClient *telemetry.TelemetryClient
+	k8sClients      *K8sClientFactory
 	actionFactories map[string]func() Action
 	active          sync.Map // maps runID -> *drillSession
 }
@@ -167,6 +168,7 @@ func NewEngine(store *storage.DecisionStore, graphClient *graph.Client, telemetr
 		store:           store,
 		graphClient:     graphClient,
 		telemetryClient: telemetryClient,
+		k8sClients:      k8sClients,
 		actionFactories: make(map[string]func() Action),
 	}
 	e.actionFactories["ServiceShutdown"] = func() Action { return NewScaleDeploymentAction(k8sClients) }
@@ -210,6 +212,11 @@ func (e *Engine) ExecuteDrill(runID string) error {
 		return fmt.Errorf("run not found or error: %w", err)
 	}
 
+	if err := e.preflightExecuteDrill(run); err != nil {
+		e.failRun(run, "Validate", err.Error())
+		return err
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	session := newDrillSession(runID, cancel)
 	e.active.Store(runID, session)
@@ -217,6 +224,63 @@ func (e *Engine) ExecuteDrill(runID string) error {
 	go e.runStateMachine(ctx, run, session)
 
 	return nil
+}
+
+func (e *Engine) preflightExecuteDrill(run *storage.DrillRun) error {
+	if run == nil {
+		return fmt.Errorf("drill preflight failed: nil run")
+	}
+	if e.k8sClients == nil {
+		// Use default resolution path so preflight still validates env/kubeconfig state.
+		e.k8sClients = NewK8sClientFactory(K8sClientOptions{})
+	}
+
+	parsedConfig, namespace, targetName, err := e.parseRunConfigAndTarget(run)
+	if err != nil {
+		return fmt.Errorf("drill preflight failed: invalid run configuration: %w", err)
+	}
+
+	_ = parsedConfig // reserved for future preflight checks
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	switch run.Type {
+	case "ServiceShutdown", "ServiceBrownout", "ScaleStress":
+		if targetName == "" {
+			return fmt.Errorf("drill preflight failed: empty deployment target for %s", run.Type)
+		}
+		return e.k8sClients.PreflightDeploymentAccess(ctx, namespace, targetName)
+	case "NetworkCut", "ExtendedNetworkCut", "TargetedLoad", "TrafficSpike":
+		return e.k8sClients.PreflightNamespaceAccess(ctx, namespace)
+	default:
+		// Unsupported drill types are handled by the state machine validation path.
+		return nil
+	}
+}
+
+func (e *Engine) parseRunConfigAndTarget(run *storage.DrillRun) (RunConfig, string, string, error) {
+	var parsedConfig RunConfig
+	if run == nil {
+		return parsedConfig, "", "", fmt.Errorf("nil run")
+	}
+
+	if err := json.Unmarshal(run.Config, &parsedConfig); err != nil {
+		return parsedConfig, "", "", err
+	}
+
+	namespace := parsedConfig.Namespace
+	target := run.Target
+	if namespace == "" {
+		parts := strings.Split(run.Target, "/")
+		if len(parts) == 2 {
+			namespace = parts[0]
+			target = parts[1]
+		} else {
+			namespace = "default"
+		}
+	}
+
+	return parsedConfig, namespace, target, nil
 }
 
 func (e *Engine) runStateMachine(ctx context.Context, run *storage.DrillRun, session *drillSession) {
@@ -232,22 +296,12 @@ func (e *Engine) runStateMachine(ctx context.Context, run *storage.DrillRun, ses
 	}
 	action := actionFactory()
 
-	var parsedConfig RunConfig
-	if err := json.Unmarshal(run.Config, &parsedConfig); err != nil {
+	parsedConfig, namespace, targetName, err := e.parseRunConfigAndTarget(run)
+	if err != nil {
 		e.failRun(run, "Validate", "Invalid configuration format")
 		return
 	}
-
-	namespace := parsedConfig.Namespace
-	if namespace == "" {
-		parts := strings.Split(run.Target, "/")
-		if len(parts) == 2 {
-			namespace = parts[0]
-			run.Target = parts[1]
-		} else {
-			namespace = "default"
-		}
-	}
+	run.Target = targetName
 	session.setActionContext(action, namespace)
 
 	// 1. Warmup Snapshot
@@ -397,6 +451,58 @@ func (e *Engine) RecoverDrill(runID string) error {
 
 	_, err := session.requestRecovery(recoveryTrigger{Source: "manual"})
 	return err
+}
+
+// K8sHealthResult holds the outcome of a Kubernetes connectivity probe.
+type K8sHealthResult struct {
+	Reachable bool   `json:"reachable"`
+	Host      string `json:"host,omitempty"`
+	Version   string `json:"version,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Hint      string `json:"hint,omitempty"`
+}
+
+// CheckK8sConnectivity performs a lightweight probe against the configured
+// Kubernetes API server. It returns a structured result rather than an error
+// so that callers (HTTP handlers) can always produce a JSON response.
+func (e *Engine) CheckK8sConnectivity() K8sHealthResult {
+	if e.k8sClients == nil {
+		e.k8sClients = NewK8sClientFactory(K8sClientOptions{})
+	}
+
+	clientset, restCfg, err := e.k8sClients.clientsetWithConfig()
+	if err != nil {
+		return K8sHealthResult{
+			Reachable: false,
+			Error:     err.Error(),
+			Hint:      "Unable to load Kubernetes client configuration. Ensure DRILLS_KUBECONFIG_PATH or KUBECONFIG is set, or that the analysis engine is running inside a cluster.",
+		}
+	}
+
+	host := ""
+	if restCfg != nil {
+		host = restCfg.Host
+	}
+
+	info, err := clientset.Discovery().ServerVersion()
+	if err != nil {
+		hint := "Kubernetes API server is unreachable."
+		if isLoopbackAPIHost(host) {
+			hint = "Detected loopback Kubernetes API endpoint (" + host + "). Start an SSH tunnel to your cluster on this port, or set DRILLS_KUBE_API_SERVER to a reachable cluster endpoint."
+		}
+		return K8sHealthResult{
+			Reachable: false,
+			Host:      host,
+			Error:     err.Error(),
+			Hint:      hint,
+		}
+	}
+
+	return K8sHealthResult{
+		Reachable: true,
+		Host:      host,
+		Version:   info.GitVersion,
+	}
 }
 
 func (e *Engine) RuntimeState(runID string) *DrillRuntimeState {

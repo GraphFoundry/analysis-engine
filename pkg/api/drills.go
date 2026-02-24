@@ -19,6 +19,7 @@ type DrillsHandler struct {
 
 func (h *DrillsHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/drills", func(r chi.Router) {
+		r.Get("/k8s-health", h.K8sHealth)
 		r.Post("/plan", h.PlanDrill)
 		r.Post("/run", h.RunDrill)
 		r.Get("/runs/{id}", h.GetDrillRun)
@@ -63,7 +64,11 @@ func (h *DrillsHandler) RunDrill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.Engine.ExecuteDrill(req.RunID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		status := http.StatusInternalServerError
+		if strings.Contains(strings.ToLower(err.Error()), "drill preflight failed") {
+			status = http.StatusPreconditionFailed
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
 
@@ -151,6 +156,28 @@ func (h *DrillsHandler) RecoverDrillRun(w http.ResponseWriter, r *http.Request) 
 
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]string{"status": "recovering"})
+}
+
+func (h *DrillsHandler) K8sHealth(w http.ResponseWriter, r *http.Request) {
+	if h.Engine == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"reachable": false,
+			"error":     "drill engine not initialized",
+		})
+		return
+	}
+
+	result := h.Engine.CheckK8sConnectivity()
+
+	w.Header().Set("Content-Type", "application/json")
+	if !result.Reachable {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+	json.NewEncoder(w).Encode(result)
 }
 
 func (h *DrillsHandler) ListHistory(w http.ResponseWriter, r *http.Request) {

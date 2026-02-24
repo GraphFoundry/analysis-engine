@@ -3,6 +3,7 @@ package drills
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -16,21 +17,137 @@ import (
 )
 
 const (
-	StatusPlanned    = "Planned"
-	StatusRunning    = "Running"
-	StatusObserving  = "Observing"
-	StatusRecovering = "Recovering"
-	StatusCompleted  = "Completed"
-	StatusAborted    = "Aborted"
-	StatusFailed     = "Failed"
+	StatusPlanned          = "Planned"
+	StatusRunning          = "Running"
+	StatusObserving        = "Observing"
+	StatusAwaitingRecovery = "AwaitingRecovery"
+	StatusRecovering       = "Recovering"
+	StatusCompleted        = "Completed"
+	StatusAborted          = "Aborted"
+	StatusFailed           = "Failed"
+
+	recoveryModeManualWithFailsafe = "manual_with_failsafe"
+	recoveryFailsafeTimeout        = 5 * time.Minute
 )
+
+var (
+	ErrDrillNotActive      = errors.New("drill is not actively running")
+	ErrDrillNotRecoverable = errors.New("drill is not awaiting recovery")
+)
+
+type recoveryTrigger struct {
+	Source      string
+	MarkAborted bool
+}
+
+type DrillRuntimeState struct {
+	CanRecover       bool    `json:"canRecover,omitempty"`
+	RecoveryDeadline *string `json:"recoveryDeadline,omitempty"`
+	RecoveryMode     string  `json:"recoveryMode,omitempty"`
+	RecoverySource   string  `json:"recoverySource,omitempty"`
+}
+
+type drillSession struct {
+	runID     string
+	cancel    context.CancelFunc
+	recoverCh chan recoveryTrigger
+
+	mu               sync.Mutex
+	action           Action
+	namespace        string
+	awaitingRecovery bool
+	recoveryStarted  bool
+	recoveryDeadline time.Time
+	recoverySource   string
+	recoveryAborted  bool
+}
+
+func newDrillSession(runID string, cancel context.CancelFunc) *drillSession {
+	return &drillSession{
+		runID:     runID,
+		cancel:    cancel,
+		recoverCh: make(chan recoveryTrigger, 1),
+	}
+}
+
+func (s *drillSession) setActionContext(action Action, namespace string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.action = action
+	s.namespace = namespace
+}
+
+func (s *drillSession) beginAwaitingRecovery(deadline time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.awaitingRecovery = true
+	s.recoveryStarted = false
+	s.recoveryDeadline = deadline.UTC()
+}
+
+func (s *drillSession) requestRecovery(trigger recoveryTrigger) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.recoveryStarted {
+		return false, nil
+	}
+	if !s.awaitingRecovery {
+		return false, ErrDrillNotRecoverable
+	}
+
+	s.awaitingRecovery = false
+	s.recoveryStarted = true
+	s.recoverySource = trigger.Source
+	s.recoveryAborted = trigger.MarkAborted
+
+	select {
+	case s.recoverCh <- trigger:
+	default:
+	}
+
+	return true, nil
+}
+
+func (s *drillSession) beginFailsafeRecovery() recoveryTrigger {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.recoveryStarted {
+		return recoveryTrigger{Source: s.recoverySource, MarkAborted: s.recoveryAborted}
+	}
+
+	s.awaitingRecovery = false
+	s.recoveryStarted = true
+	s.recoverySource = "failsafe"
+	s.recoveryAborted = false
+	return recoveryTrigger{Source: "failsafe"}
+}
+
+func (s *drillSession) runtimeState() DrillRuntimeState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state := DrillRuntimeState{
+		RecoveryMode:   recoveryModeManualWithFailsafe,
+		RecoverySource: s.recoverySource,
+	}
+
+	if s.awaitingRecovery {
+		state.CanRecover = true
+		deadline := s.recoveryDeadline.UTC().Format(time.RFC3339)
+		state.RecoveryDeadline = &deadline
+	}
+
+	return state
+}
 
 type Engine struct {
 	store           *storage.DecisionStore
 	graphClient     *graph.Client
 	telemetryClient *telemetry.TelemetryClient
 	actionFactories map[string]func() Action
-	active          sync.Map // maps runID -> context.CancelFunc
+	active          sync.Map // maps runID -> *drillSession
 }
 
 type EngineOptions struct {
@@ -61,7 +178,7 @@ func NewEngine(store *storage.DecisionStore, graphClient *graph.Client, telemetr
 
 type RunConfig struct {
 	Namespace     string `json:"namespace"`
-	ObserveTokens int    `json:"observeTokens"` // seconds to observe before rollback
+	ObserveTokens int    `json:"observeTokens"` // seconds to observe before recovery gate
 }
 
 func (e *Engine) PlanDrill(drillType, target string, config json.RawMessage) (*storage.DrillRun, error) {
@@ -91,14 +208,15 @@ func (e *Engine) ExecuteDrill(runID string) error {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	e.active.Store(runID, cancel)
+	session := newDrillSession(runID, cancel)
+	e.active.Store(runID, session)
 
-	go e.runStateMachine(ctx, run)
+	go e.runStateMachine(ctx, run, session)
 
 	return nil
 }
 
-func (e *Engine) runStateMachine(ctx context.Context, run *storage.DrillRun) {
+func (e *Engine) runStateMachine(ctx context.Context, run *storage.DrillRun, session *drillSession) {
 	defer e.active.Delete(run.ID)
 
 	e.updateStatus(run, StatusRunning)
@@ -127,6 +245,7 @@ func (e *Engine) runStateMachine(ctx context.Context, run *storage.DrillRun) {
 			namespace = "default"
 		}
 	}
+	session.setActionContext(action, namespace)
 
 	// 1. Warmup Snapshot
 	e.logStep(run.ID, "Warmup", "Capturing baseline metrics", "Ok")
@@ -154,21 +273,26 @@ func (e *Engine) runStateMachine(ctx context.Context, run *storage.DrillRun) {
 
 	e.logStep(run.ID, "Observation", fmt.Sprintf("Observing system for %v", observeTime), "Ok")
 
+	recovery := recoveryTrigger{Source: "failsafe"}
 	select {
 	case <-ctx.Done():
-		// Aborted early!
+		// Aborted early -> recover immediately.
 		e.logStep(run.ID, "Observation", "Drill aborted by user during observation", "Warn")
 		run.Verdict = "Aborted"
+		recovery = recoveryTrigger{Source: "abort", MarkAborted: true}
 	case <-time.After(observeTime):
-		// Natural progression
 		run.Verdict = "Success"
+		recovery = e.awaitRecoveryAuthorization(ctx, run, session)
+		if recovery.MarkAborted {
+			run.Verdict = "Aborted"
+		}
 	}
 
 	// 4. Recovery
 	e.updateStatus(run, StatusRecovering)
-	e.logStep(run.ID, "Recovery", "Initiating automatic rollback", "Ok")
+	e.logStep(run.ID, "Recovery", e.recoveryInitiationMessage(recovery), "Ok")
 
-	// Use background context for rollback just in case main ctx was cancelled
+	// Use background context for rollback just in case main ctx was cancelled.
 	if err := action.Rollback(context.Background(), namespace, run.Target, run.Config); err != nil {
 		e.logStep(run.ID, "Recovery", fmt.Sprintf("Rollback failed: %v", err), "Error")
 		run.Verdict = "Partial/Fail"
@@ -178,7 +302,7 @@ func (e *Engine) runStateMachine(ctx context.Context, run *storage.DrillRun) {
 
 	// 5. Post Snapshot
 	e.logStep(run.ID, "PostSnapshot", "Capturing final metrics", "Ok")
-	if snapshot, err := e.captureSnapshot(ctx); err == nil {
+	if snapshot, err := e.captureSnapshot(context.Background()); err == nil {
 		run.PostSnapshot = snapshot
 	} else {
 		e.logStep(run.ID, "PostSnapshot", fmt.Sprintf("Warning: Snapshot failed: %v", err), "Warn")
@@ -195,6 +319,38 @@ func (e *Engine) runStateMachine(ctx context.Context, run *storage.DrillRun) {
 	e.logStep(run.ID, "Finalize", "Drill completed", "Ok")
 }
 
+func (e *Engine) awaitRecoveryAuthorization(ctx context.Context, run *storage.DrillRun, session *drillSession) recoveryTrigger {
+	deadline := time.Now().UTC().Add(recoveryFailsafeTimeout)
+	session.beginAwaitingRecovery(deadline)
+	e.updateStatus(run, StatusAwaitingRecovery)
+	e.logStep(run.ID, "Recovery", fmt.Sprintf("Observation complete; awaiting operator recovery (failsafe in %s)", recoveryFailsafeTimeout), "Warn")
+
+	timer := time.NewTimer(recoveryFailsafeTimeout)
+	defer timer.Stop()
+
+	select {
+	case trigger := <-session.recoverCh:
+		return trigger
+	case <-timer.C:
+		return session.beginFailsafeRecovery()
+	case <-ctx.Done():
+		return recoveryTrigger{Source: "abort", MarkAborted: true}
+	}
+}
+
+func (e *Engine) recoveryInitiationMessage(trigger recoveryTrigger) string {
+	switch trigger.Source {
+	case "manual":
+		return "Initiating operator-approved rollback (source: manual)"
+	case "abort":
+		return "Emergency rollback initiated (source: abort)"
+	case "failsafe":
+		return "Failsafe timeout reached; initiating rollback (source: failsafe)"
+	default:
+		return "Initiating rollback"
+	}
+}
+
 func (e *Engine) captureSnapshot(ctx context.Context) (json.RawMessage, error) {
 	if e.graphClient == nil {
 		return nil, fmt.Errorf("graph client not initialized")
@@ -207,12 +363,50 @@ func (e *Engine) captureSnapshot(ctx context.Context) (json.RawMessage, error) {
 }
 
 func (e *Engine) AbortDrill(runID string) error {
-	cancel, ok := e.active.Load(runID)
+	raw, ok := e.active.Load(runID)
 	if !ok {
-		return fmt.Errorf("drill %s is not actively running", runID)
+		return fmt.Errorf("%w: %s", ErrDrillNotActive, runID)
 	}
-	cancel.(context.CancelFunc)()
+	session, ok := raw.(*drillSession)
+	if !ok || session == nil {
+		return fmt.Errorf("%w: %s", ErrDrillNotActive, runID)
+	}
+
+	if queued, err := session.requestRecovery(recoveryTrigger{Source: "abort", MarkAborted: true}); err == nil && queued {
+		return nil
+	} else if err != nil && !errors.Is(err, ErrDrillNotRecoverable) {
+		return err
+	}
+
+	session.cancel()
 	return nil
+}
+
+func (e *Engine) RecoverDrill(runID string) error {
+	raw, ok := e.active.Load(runID)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrDrillNotRecoverable, runID)
+	}
+	session, ok := raw.(*drillSession)
+	if !ok || session == nil {
+		return fmt.Errorf("%w: %s", ErrDrillNotRecoverable, runID)
+	}
+
+	_, err := session.requestRecovery(recoveryTrigger{Source: "manual"})
+	return err
+}
+
+func (e *Engine) RuntimeState(runID string) *DrillRuntimeState {
+	raw, ok := e.active.Load(runID)
+	if !ok {
+		return nil
+	}
+	session, ok := raw.(*drillSession)
+	if !ok || session == nil {
+		return nil
+	}
+	state := session.runtimeState()
+	return &state
 }
 
 func (e *Engine) updateStatus(run *storage.DrillRun, status string) {

@@ -4,8 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -19,27 +27,136 @@ type Action interface {
 	Rollback(ctx context.Context, namespace, target string, config json.RawMessage) error
 }
 
-func getK8sClient() (*kubernetes.Clientset, error) {
-	// Try in-cluster first
-	config, err := rest.InClusterConfig()
+type K8sClientOptions struct {
+	KubeconfigPath string
+	KubeContext    string
+	APIServer      string
+}
+
+type K8sClientFactory struct {
+	opts K8sClientOptions
+}
+
+func NewK8sClientFactory(opts K8sClientOptions) *K8sClientFactory {
+	return &K8sClientFactory{opts: opts}
+}
+
+func (f *K8sClientFactory) Clientset() (*kubernetes.Clientset, error) {
+	restCfg, err := f.restConfig()
 	if err != nil {
-		// Fallback to default kubeconfig
-		kubeconfig := clientcmd.NewDefaultClientConfigLoadingRules().GetDefaultFilename()
-		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load k8s config: %w", err)
+		return nil, err
+	}
+	return kubernetes.NewForConfig(restCfg)
+}
+
+func (f *K8sClientFactory) restConfig() (*rest.Config, error) {
+	opts := f.resolvedOptions()
+
+	var inClusterErr error
+	var kubeconfigErr error
+
+	kubeconfigPreferred := opts.KubeconfigPath != "" || opts.KubeContext != "" || os.Getenv("KUBECONFIG") != ""
+	if kubeconfigPreferred {
+		if cfg, err := buildKubeconfigRestConfig(opts); err == nil {
+			return cfg, nil
+		} else {
+			kubeconfigErr = err
 		}
 	}
-	return kubernetes.NewForConfig(config)
+
+	if cfg, err := rest.InClusterConfig(); err == nil {
+		if opts.APIServer != "" {
+			cfg.Host = opts.APIServer
+		}
+		return cfg, nil
+	} else {
+		inClusterErr = err
+	}
+
+	if !kubeconfigPreferred {
+		if cfg, err := buildKubeconfigRestConfig(opts); err == nil {
+			return cfg, nil
+		} else {
+			kubeconfigErr = err
+		}
+	}
+
+	return nil, fmt.Errorf("failed to load k8s config (in-cluster: %v; kubeconfig: %v)", inClusterErr, kubeconfigErr)
+}
+
+func (f *K8sClientFactory) resolvedOptions() K8sClientOptions {
+	opts := K8sClientOptions{}
+	if f != nil {
+		opts = f.opts
+	}
+	if opts.KubeconfigPath == "" {
+		opts.KubeconfigPath = firstNonEmptyEnv("DRILLS_KUBECONFIG_PATH", "DRILLS_KUBECONFIG")
+	}
+	if opts.KubeContext == "" {
+		opts.KubeContext = os.Getenv("DRILLS_KUBE_CONTEXT")
+	}
+	if opts.APIServer == "" {
+		opts.APIServer = os.Getenv("DRILLS_KUBE_API_SERVER")
+	}
+	return opts
+}
+
+func buildKubeconfigRestConfig(opts K8sClientOptions) (*rest.Config, error) {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if opts.KubeconfigPath != "" {
+		loadingRules.ExplicitPath = expandHomePath(opts.KubeconfigPath)
+	}
+
+	overrides := &clientcmd.ConfigOverrides{}
+	if opts.KubeContext != "" {
+		overrides.CurrentContext = opts.KubeContext
+	}
+
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
+	cfg, err := clientConfig.ClientConfig()
+	if err != nil {
+		return nil, err
+	}
+	if opts.APIServer != "" {
+		cfg.Host = opts.APIServer
+	}
+	return cfg, nil
+}
+
+func expandHomePath(path string) string {
+	if path == "" {
+		return path
+	}
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
+func firstNonEmptyEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // ScaleDeploymentAction handles scaling a deployment to a target replica count.
 type ScaleDeploymentAction struct {
+	clients          *K8sClientFactory
 	OriginalReplicas map[string]int32
 }
 
-func NewScaleDeploymentAction() *ScaleDeploymentAction {
+func NewScaleDeploymentAction(clients ...*K8sClientFactory) *ScaleDeploymentAction {
+	var clientFactory *K8sClientFactory
+	if len(clients) > 0 {
+		clientFactory = clients[0]
+	}
 	return &ScaleDeploymentAction{
+		clients:          clientFactory,
 		OriginalReplicas: make(map[string]int32),
 	}
 }
@@ -54,7 +171,7 @@ func (a *ScaleDeploymentAction) Execute(ctx context.Context, namespace, target s
 		return fmt.Errorf("invalid config for scale action: %w", err)
 	}
 
-	clientset, err := getK8sClient()
+	clientset, err := getK8sClient(a.clients)
 	if err != nil {
 		return err
 	}
@@ -89,7 +206,7 @@ func (a *ScaleDeploymentAction) Execute(ctx context.Context, namespace, target s
 }
 
 func (a *ScaleDeploymentAction) Rollback(ctx context.Context, namespace, target string, config json.RawMessage) error {
-	clientset, err := getK8sClient()
+	clientset, err := getK8sClient(a.clients)
 	if err != nil {
 		return err
 	}
@@ -116,23 +233,44 @@ func (a *ScaleDeploymentAction) Rollback(ctx context.Context, namespace, target 
 	if err != nil {
 		return fmt.Errorf("failed to rollback scale deployment: %w", err)
 	}
+	delete(a.OriginalReplicas, key)
 	return nil
 }
 
 // NetworkPolicyAction handles simulating a network cut via K8s NetworkPolicy.
-type NetworkPolicyAction struct{}
+type NetworkPolicyAction struct {
+	clients          *K8sClientFactory
+	restoreSnapshots map[string]networkPolicyRestoreSnapshot
+}
 
-func NewNetworkPolicyAction() *NetworkPolicyAction {
-	return &NetworkPolicyAction{}
+func NewNetworkPolicyAction(clients ...*K8sClientFactory) *NetworkPolicyAction {
+	var clientFactory *K8sClientFactory
+	if len(clients) > 0 {
+		clientFactory = clients[0]
+	}
+	return &NetworkPolicyAction{
+		clients:          clientFactory,
+		restoreSnapshots: make(map[string]networkPolicyRestoreSnapshot),
+	}
 }
 
 func (a *NetworkPolicyAction) Execute(ctx context.Context, namespace, target string, config json.RawMessage) error {
-	clientset, err := getK8sClient()
+	clientset, err := getK8sClient(a.clients)
 	if err != nil {
 		return err
 	}
 
 	policyName := fmt.Sprintf("drill-deny-%s", target)
+	stateKey := fmt.Sprintf("%s/%s", namespace, target)
+
+	preSnapshotNames, err := listNetworkPolicyNames(ctx, clientset, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to capture pre network policy snapshot: %w", err)
+	}
+	if containsString(preSnapshotNames, policyName) {
+		return fmt.Errorf("network cut blocked: policy %q already exists before drill (pre-snapshot count=%d)", policyName, len(preSnapshotNames))
+	}
+
 	policy := &v1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      policyName,
@@ -153,22 +291,258 @@ func (a *NetworkPolicyAction) Execute(ctx context.Context, namespace, target str
 
 	_, err = clientset.NetworkingV1().NetworkPolicies(namespace).Create(ctx, policy, metav1.CreateOptions{})
 	if err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("network cut blocked: policy %q appeared during action execution", policyName)
+		}
 		return fmt.Errorf("failed to create deny network policy: %w", err)
+	}
+
+	createdPolicy, err := clientset.NetworkingV1().NetworkPolicies(namespace).Get(ctx, policyName, metav1.GetOptions{})
+	if err != nil {
+		_ = clientset.NetworkingV1().NetworkPolicies(namespace).Delete(context.Background(), policyName, metav1.DeleteOptions{})
+		return fmt.Errorf("network cut create verification failed for %q: %w", policyName, err)
+	}
+	if createdPolicy.Labels["drill-director"] != "active" {
+		_ = clientset.NetworkingV1().NetworkPolicies(namespace).Delete(context.Background(), policyName, metav1.DeleteOptions{})
+		return fmt.Errorf("network cut create verification failed for %q: expected drill-director=active label", policyName)
+	}
+
+	postCreateSnapshotNames, err := listNetworkPolicyNames(ctx, clientset, namespace)
+	if err != nil {
+		_ = clientset.NetworkingV1().NetworkPolicies(namespace).Delete(context.Background(), policyName, metav1.DeleteOptions{})
+		return fmt.Errorf("failed to capture post-create network policy snapshot: %w", err)
+	}
+	if !containsString(postCreateSnapshotNames, policyName) {
+		_ = clientset.NetworkingV1().NetworkPolicies(namespace).Delete(context.Background(), policyName, metav1.DeleteOptions{})
+		return fmt.Errorf("network cut create verification failed for %q: policy missing from post-create snapshot", policyName)
+	}
+
+	a.restoreSnapshots[stateKey] = networkPolicyRestoreSnapshot{
+		PolicyName: policyName,
+		PreNames:   preSnapshotNames,
 	}
 	return nil
 }
 
 func (a *NetworkPolicyAction) Rollback(ctx context.Context, namespace, target string, config json.RawMessage) error {
-	clientset, err := getK8sClient()
+	clientset, err := getK8sClient(a.clients)
 	if err != nil {
 		return err
 	}
 
+	stateKey := fmt.Sprintf("%s/%s", namespace, target)
 	policyName := fmt.Sprintf("drill-deny-%s", target)
+	snapshot, hasSnapshot := a.restoreSnapshots[stateKey]
+	if !hasSnapshot {
+		_, getErr := clientset.NetworkingV1().NetworkPolicies(namespace).Get(ctx, policyName, metav1.GetOptions{})
+		if getErr == nil {
+			return fmt.Errorf("cannot safely rollback network cut: missing pre-snapshot state and policy %q still exists", policyName)
+		}
+		if !apierrors.IsNotFound(getErr) {
+			return fmt.Errorf("failed to verify network policy state without snapshot for %q: %w", policyName, getErr)
+		}
+		return nil
+	}
+
 	err = clientset.NetworkingV1().NetworkPolicies(namespace).Delete(ctx, policyName, metav1.DeleteOptions{})
-	if err != nil {
+	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete deny network policy: %w", err)
 	}
+
+	_, getErr := clientset.NetworkingV1().NetworkPolicies(namespace).Get(ctx, policyName, metav1.GetOptions{})
+	if getErr == nil {
+		return fmt.Errorf("network cut restore verification failed: policy %q still exists after rollback", policyName)
+	}
+	if !apierrors.IsNotFound(getErr) {
+		return fmt.Errorf("network cut restore verification failed while reading %q after rollback: %w", policyName, getErr)
+	}
+
+	postRollbackNames, err := listNetworkPolicyNames(ctx, clientset, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to capture post-rollback network policy snapshot: %w", err)
+	}
+
+	if !stringSlicesEqual(snapshot.PreNames, postRollbackNames) {
+		missing, extra := diffStringSets(snapshot.PreNames, postRollbackNames)
+		return fmt.Errorf(
+			"network cut restore verification failed for %q: pre_count=%d post_count=%d missing=%v extra=%v",
+			policyName,
+			len(snapshot.PreNames),
+			len(postRollbackNames),
+			truncateStrings(missing, 6),
+			truncateStrings(extra, 6),
+		)
+	}
+
+	delete(a.restoreSnapshots, stateKey)
+	return nil
+}
+
+type networkPolicyRestoreSnapshot struct {
+	PolicyName string
+	PreNames   []string
+}
+
+type TargetedLoadActionOptions struct {
+	DeploymentName string
+	ContainerName  string
+	RateEnvName    string
+	UsersEnvName   string
+}
+
+func DefaultTargetedLoadActionOptions() TargetedLoadActionOptions {
+	return TargetedLoadActionOptions{
+		DeploymentName: "loadgenerator",
+		ContainerName:  "main",
+		RateEnvName:    "RATE",
+		UsersEnvName:   "USERS",
+	}
+}
+
+func (o TargetedLoadActionOptions) withDefaults() TargetedLoadActionOptions {
+	d := DefaultTargetedLoadActionOptions()
+	if o.DeploymentName != "" {
+		d.DeploymentName = o.DeploymentName
+	}
+	if o.ContainerName != "" {
+		d.ContainerName = o.ContainerName
+	}
+	if o.RateEnvName != "" {
+		d.RateEnvName = o.RateEnvName
+	}
+	if o.UsersEnvName != "" {
+		d.UsersEnvName = o.UsersEnvName
+	}
+	return d
+}
+
+type TargetedLoadConfig struct {
+	RPS   int `json:"rps"`
+	Rate  int `json:"rate,omitempty"`
+	Users int `json:"users,omitempty"`
+}
+
+type envVarSnapshot struct {
+	Exists bool
+	Value  string
+}
+
+type targetedLoadOriginalState struct {
+	Rate  envVarSnapshot
+	Users envVarSnapshot
+}
+
+type TargetedLoadAction struct {
+	clients   *K8sClientFactory
+	opts      TargetedLoadActionOptions
+	originals map[string]targetedLoadOriginalState
+}
+
+func NewTargetedLoadAction(opts TargetedLoadActionOptions, clients ...*K8sClientFactory) *TargetedLoadAction {
+	var clientFactory *K8sClientFactory
+	if len(clients) > 0 {
+		clientFactory = clients[0]
+	}
+	return &TargetedLoadAction{
+		clients:   clientFactory,
+		opts:      opts.withDefaults(),
+		originals: make(map[string]targetedLoadOriginalState),
+	}
+}
+
+func (a *TargetedLoadAction) Execute(ctx context.Context, namespace, target string, config json.RawMessage) error {
+	var conf TargetedLoadConfig
+	if err := json.Unmarshal(config, &conf); err != nil {
+		return fmt.Errorf("invalid config for targeted load action: %w", err)
+	}
+
+	desiredRate := conf.Rate
+	if desiredRate <= 0 {
+		desiredRate = conf.RPS
+	}
+	if desiredRate <= 0 {
+		return fmt.Errorf("invalid targeted load rate: expected positive rps/rate")
+	}
+
+	clientset, err := getK8sClient(a.clients)
+	if err != nil {
+		return err
+	}
+
+	deploymentsClient := clientset.AppsV1().Deployments(namespace)
+	stateKey := fmt.Sprintf("%s/%s", namespace, a.opts.DeploymentName)
+
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		deployment, getErr := deploymentsClient.Get(ctx, a.opts.DeploymentName, metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("failed to get load generator deployment %q: %w", a.opts.DeploymentName, getErr)
+		}
+
+		containerIdx, findErr := findContainerIndex(deployment, a.opts.ContainerName)
+		if findErr != nil {
+			return findErr
+		}
+
+		container := &deployment.Spec.Template.Spec.Containers[containerIdx]
+		if _, exists := a.originals[stateKey]; !exists {
+			rateValue, rateExists := getEnvVar(container.Env, a.opts.RateEnvName)
+			usersValue, usersExists := getEnvVar(container.Env, a.opts.UsersEnvName)
+			a.originals[stateKey] = targetedLoadOriginalState{
+				Rate:  envVarSnapshot{Exists: rateExists, Value: rateValue},
+				Users: envVarSnapshot{Exists: usersExists, Value: usersValue},
+			}
+		}
+
+		container.Env = setEnvVar(container.Env, a.opts.RateEnvName, strconv.Itoa(desiredRate))
+		if conf.Users > 0 {
+			container.Env = setEnvVar(container.Env, a.opts.UsersEnvName, strconv.Itoa(conf.Users))
+		}
+
+		_, updateErr := deploymentsClient.Update(ctx, deployment, metav1.UpdateOptions{})
+		return updateErr
+	})
+	if err != nil {
+		return fmt.Errorf("failed to apply targeted load action: %w", err)
+	}
+	return nil
+}
+
+func (a *TargetedLoadAction) Rollback(ctx context.Context, namespace, target string, config json.RawMessage) error {
+	stateKey := fmt.Sprintf("%s/%s", namespace, a.opts.DeploymentName)
+	original, exists := a.originals[stateKey]
+	if !exists {
+		return nil
+	}
+
+	clientset, err := getK8sClient(a.clients)
+	if err != nil {
+		return err
+	}
+
+	deploymentsClient := clientset.AppsV1().Deployments(namespace)
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		deployment, getErr := deploymentsClient.Get(ctx, a.opts.DeploymentName, metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("failed to get load generator deployment %q for rollback: %w", a.opts.DeploymentName, getErr)
+		}
+
+		containerIdx, findErr := findContainerIndex(deployment, a.opts.ContainerName)
+		if findErr != nil {
+			return findErr
+		}
+
+		container := &deployment.Spec.Template.Spec.Containers[containerIdx]
+		container.Env = restoreEnvVar(container.Env, a.opts.RateEnvName, original.Rate)
+		container.Env = restoreEnvVar(container.Env, a.opts.UsersEnvName, original.Users)
+
+		_, updateErr := deploymentsClient.Update(ctx, deployment, metav1.UpdateOptions{})
+		return updateErr
+	})
+	if err != nil {
+		return fmt.Errorf("failed to rollback targeted load action: %w", err)
+	}
+
+	delete(a.originals, stateKey)
 	return nil
 }
 
@@ -186,4 +560,132 @@ func (m *MockAction) Execute(ctx context.Context, namespace, target string, conf
 
 func (m *MockAction) Rollback(ctx context.Context, namespace, target string, config json.RawMessage) error {
 	return nil
+}
+
+func getK8sClient(factory *K8sClientFactory) (*kubernetes.Clientset, error) {
+	if factory == nil {
+		factory = NewK8sClientFactory(K8sClientOptions{})
+	}
+	return factory.Clientset()
+}
+
+func findContainerIndex(deployment *appsv1.Deployment, preferredName string) (int, error) {
+	containers := deployment.Spec.Template.Spec.Containers
+	if len(containers) == 0 {
+		return 0, fmt.Errorf("deployment %s/%s has no containers", deployment.Namespace, deployment.Name)
+	}
+	if preferredName == "" {
+		return 0, nil
+	}
+	for i, container := range containers {
+		if container.Name == preferredName {
+			return i, nil
+		}
+	}
+	if len(containers) == 1 {
+		return 0, nil
+	}
+	return 0, fmt.Errorf("container %q not found in deployment %s/%s", preferredName, deployment.Namespace, deployment.Name)
+}
+
+func getEnvVar(envs []corev1.EnvVar, name string) (string, bool) {
+	for _, env := range envs {
+		if env.Name == name {
+			return env.Value, true
+		}
+	}
+	return "", false
+}
+
+func setEnvVar(envs []corev1.EnvVar, name, value string) []corev1.EnvVar {
+	for i := range envs {
+		if envs[i].Name == name {
+			envs[i].Value = value
+			envs[i].ValueFrom = nil
+			return envs
+		}
+	}
+	return append(envs, corev1.EnvVar{Name: name, Value: value})
+}
+
+func restoreEnvVar(envs []corev1.EnvVar, name string, snapshot envVarSnapshot) []corev1.EnvVar {
+	if snapshot.Exists {
+		return setEnvVar(envs, name, snapshot.Value)
+	}
+	filtered := envs[:0]
+	for _, env := range envs {
+		if env.Name != name {
+			filtered = append(filtered, env)
+		}
+	}
+	return filtered
+}
+
+func listNetworkPolicyNames(ctx context.Context, clientset *kubernetes.Clientset, namespace string) ([]string, error) {
+	list, err := clientset.NetworkingV1().NetworkPolicies(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(list.Items))
+	for _, item := range list.Items {
+		names = append(names, item.Name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func containsString(items []string, needle string) bool {
+	for _, item := range items {
+		if item == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func diffStringSets(expected, actual []string) (missing []string, extra []string) {
+	expectedSet := make(map[string]struct{}, len(expected))
+	actualSet := make(map[string]struct{}, len(actual))
+
+	for _, v := range expected {
+		expectedSet[v] = struct{}{}
+	}
+	for _, v := range actual {
+		actualSet[v] = struct{}{}
+	}
+	for _, v := range expected {
+		if _, ok := actualSet[v]; !ok {
+			missing = append(missing, v)
+		}
+	}
+	for _, v := range actual {
+		if _, ok := expectedSet[v]; !ok {
+			extra = append(extra, v)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+	return missing, extra
+}
+
+func truncateStrings(items []string, limit int) []string {
+	if limit <= 0 || len(items) <= limit {
+		return items
+	}
+	out := make([]string, 0, limit+1)
+	out = append(out, items[:limit]...)
+	out = append(out, fmt.Sprintf("...+%d more", len(items)-limit))
+	return out
 }

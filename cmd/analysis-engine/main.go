@@ -69,7 +69,19 @@ func main() {
 	decisionsHandler := &api.DecisionsHandler{Store: store}
 	telemetryHandler := &api.TelemetryHandler{Client: telemetryClient, Cfg: cfg}
 
-	drillEngine := drills.NewEngine(store, graphClient, telemetryClient)
+	drillEngine := drills.NewEngine(store, graphClient, telemetryClient, drills.EngineOptions{
+		K8sClientOptions: drills.K8sClientOptions{
+			KubeconfigPath: cfg.Drills.KubeconfigPath,
+			KubeContext:    cfg.Drills.KubeContext,
+			APIServer:      cfg.Drills.KubeAPIServer,
+		},
+		TargetedLoad: drills.TargetedLoadActionOptions{
+			DeploymentName: cfg.Drills.LoadGeneratorDeployment,
+			ContainerName:  cfg.Drills.LoadGeneratorContainer,
+			RateEnvName:    cfg.Drills.TargetedLoadRateEnv,
+			UsersEnvName:   cfg.Drills.TargetedLoadUsersEnv,
+		},
+	})
 	drillsHandler := &api.DrillsHandler{Engine: drillEngine, Store: store}
 
 	r := chi.NewRouter()

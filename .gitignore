@@ -14,6 +14,7 @@ analysis-engine
 
 # Config
 .env
+.drills-kubeconfig
 .DS_Store
 
 # IDEs

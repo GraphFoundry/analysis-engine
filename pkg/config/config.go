@@ -16,6 +16,7 @@ type Config struct {
 	TelemetryWorker TelemetryWorkerConfig
 	Telemetry       TelemetryConfig
 	Webhook         WebhookConfig
+	Drills          DrillsConfig
 }
 
 type SimulationConfig struct {
@@ -76,6 +77,16 @@ type WebhookConfig struct {
 	AcceptLegacySignature bool
 }
 
+type DrillsConfig struct {
+	KubeconfigPath          string
+	KubeContext             string
+	KubeAPIServer           string
+	LoadGeneratorDeployment string
+	LoadGeneratorContainer  string
+	TargetedLoadRateEnv     string
+	TargetedLoadUsersEnv    string
+}
+
 func Load() (*Config, error) {
 	cfg := &Config{
 		Simulation: SimulationConfig{
@@ -126,6 +137,15 @@ func Load() (*Config, error) {
 			MaxInFlight:           getEnvInt("WEBHOOK_MAX_IN_FLIGHT", 32),
 			ProcessTimeoutMs:      getEnvInt("WEBHOOK_PROCESS_TIMEOUT_MS", 15000),
 			AcceptLegacySignature: getEnv("WEBHOOK_ACCEPT_LEGACY_SIGNATURE", "true") != "false",
+		},
+		Drills: DrillsConfig{
+			KubeconfigPath:          getEnv("DRILLS_KUBECONFIG_PATH", getEnv("DRILLS_KUBECONFIG", "")),
+			KubeContext:             getEnv("DRILLS_KUBE_CONTEXT", ""),
+			KubeAPIServer:           getEnv("DRILLS_KUBE_API_SERVER", ""),
+			LoadGeneratorDeployment: getEnv("DRILLS_LOADGEN_DEPLOYMENT", "loadgenerator"),
+			LoadGeneratorContainer:  getEnv("DRILLS_LOADGEN_CONTAINER", "main"),
+			TargetedLoadRateEnv:     getEnv("DRILLS_TARGETED_LOAD_RATE_ENV", "RATE"),
+			TargetedLoadUsersEnv:    getEnv("DRILLS_TARGETED_LOAD_USERS_ENV", "USERS"),
 		},
 	}
 

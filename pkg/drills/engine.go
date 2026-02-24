@@ -29,21 +29,33 @@ type Engine struct {
 	store           *storage.DecisionStore
 	graphClient     *graph.Client
 	telemetryClient *telemetry.TelemetryClient
-	actions         map[string]Action
+	actionFactories map[string]func() Action
 	active          sync.Map // maps runID -> context.CancelFunc
 }
 
-func NewEngine(store *storage.DecisionStore, graphClient *graph.Client, telemetryClient *telemetry.TelemetryClient) *Engine {
+type EngineOptions struct {
+	K8sClientOptions K8sClientOptions
+	TargetedLoad     TargetedLoadActionOptions
+}
+
+func NewEngine(store *storage.DecisionStore, graphClient *graph.Client, telemetryClient *telemetry.TelemetryClient, options ...EngineOptions) *Engine {
+	var opts EngineOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
+
+	k8sClients := NewK8sClientFactory(opts.K8sClientOptions)
+
 	e := &Engine{
 		store:           store,
 		graphClient:     graphClient,
 		telemetryClient: telemetryClient,
-		actions:         make(map[string]Action),
+		actionFactories: make(map[string]func() Action),
 	}
-	e.actions["ServiceShutdown"] = NewScaleDeploymentAction()
-	e.actions["ScaleStress"] = NewScaleDeploymentAction()
-	e.actions["NetworkCut"] = NewNetworkPolicyAction()
-	e.actions["TargetedLoad"] = NewMockAction("Simulating artificial traffic spikes")
+	e.actionFactories["ServiceShutdown"] = func() Action { return NewScaleDeploymentAction(k8sClients) }
+	e.actionFactories["ScaleStress"] = func() Action { return NewScaleDeploymentAction(k8sClients) }
+	e.actionFactories["NetworkCut"] = func() Action { return NewNetworkPolicyAction(k8sClients) }
+	e.actionFactories["TargetedLoad"] = func() Action { return NewTargetedLoadAction(opts.TargetedLoad, k8sClients) }
 	return e
 }
 
@@ -92,11 +104,12 @@ func (e *Engine) runStateMachine(ctx context.Context, run *storage.DrillRun) {
 	e.updateStatus(run, StatusRunning)
 	e.logStep(run.ID, "Validate", "Starting drill validation", "Ok")
 
-	action, exists := e.actions[run.Type]
+	actionFactory, exists := e.actionFactories[run.Type]
 	if !exists {
 		e.failRun(run, "Validate", "Unsupported drill type")
 		return
 	}
+	action := actionFactory()
 
 	var parsedConfig RunConfig
 	if err := json.Unmarshal(run.Config, &parsedConfig); err != nil {

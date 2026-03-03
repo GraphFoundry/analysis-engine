@@ -180,6 +180,7 @@ func NewEngine(store *storage.DecisionStore, graphClient *graph.Client, telemetr
 	e.actionFactories["ExtendedNetworkCut"] = func() Action { return NewNetworkPolicyAction(k8sClients) }
 	e.actionFactories["TargetedLoad"] = func() Action { return NewTargetedLoadAction(opts.TargetedLoad, k8sClients) }
 	e.actionFactories["TrafficSpike"] = func() Action { return NewTargetedLoadAction(opts.TargetedLoad, k8sClients) }
+	e.actionFactories["MigrateService"] = func() Action { return NewMigrateServiceAction(k8sClients) }
 	return e
 }
 
@@ -247,7 +248,7 @@ func (e *Engine) preflightExecuteDrill(run *storage.DrillRun) error {
 	defer cancel()
 
 	switch run.Type {
-	case "ServiceShutdown", "ServiceBrownout", "ScaleStress":
+	case "ServiceShutdown", "ServiceBrownout", "ScaleStress", "MigrateService", "PodScaleUp", "PodScaleDown":
 		if targetName == "" {
 			return fmt.Errorf("drill preflight failed: empty deployment target for %s", run.Type)
 		}

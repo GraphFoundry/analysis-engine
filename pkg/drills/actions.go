@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -653,6 +654,179 @@ func getK8sClient(factory *K8sClientFactory) (*kubernetes.Clientset, error) {
 		factory = NewK8sClientFactory(K8sClientOptions{})
 	}
 	return factory.Clientset()
+}
+
+// MigrateServiceAction migrates a service's pods to a specific target node.
+// It uses nodeSelector patching + scale-down/up to force pod rescheduling.
+type MigrateServiceAction struct {
+	clients          *K8sClientFactory
+	OriginalReplicas map[string]int32
+	OriginalSelector map[string]map[string]string // saved nodeSelector for rollback
+}
+
+func NewMigrateServiceAction(clients ...*K8sClientFactory) *MigrateServiceAction {
+	var clientFactory *K8sClientFactory
+	if len(clients) > 0 {
+		clientFactory = clients[0]
+	}
+	return &MigrateServiceAction{
+		clients:          clientFactory,
+		OriginalReplicas: make(map[string]int32),
+		OriginalSelector: make(map[string]map[string]string),
+	}
+}
+
+type MigrateConfig struct {
+	TargetNode string `json:"targetNode"`
+	Replicas   int32  `json:"replicas,omitempty"` // if 0, preserves current replica count
+}
+
+func (a *MigrateServiceAction) Execute(ctx context.Context, namespace, target string, config json.RawMessage) error {
+	var conf MigrateConfig
+	if err := json.Unmarshal(config, &conf); err != nil {
+		return fmt.Errorf("invalid config for migrate action: %w", err)
+	}
+	if conf.TargetNode == "" {
+		return fmt.Errorf("targetNode is required for migration")
+	}
+
+	clientset, err := getK8sClient(a.clients)
+	if err != nil {
+		return err
+	}
+
+	key := fmt.Sprintf("%s/%s", namespace, target)
+	if err := a.saveOriginalState(ctx, clientset, namespace, target, key); err != nil {
+		return err
+	}
+	if err := a.patchAndScaleDown(ctx, clientset, namespace, target, conf.TargetNode, key); err != nil {
+		return err
+	}
+	if err := a.waitForPodsTerminated(ctx, clientset, namespace, target); err != nil {
+		return err
+	}
+	return a.scaleUpOnTarget(ctx, clientset, namespace, target, conf.Replicas, key)
+}
+
+func (a *MigrateServiceAction) saveOriginalState(ctx context.Context, clientset *kubernetes.Clientset, namespace, target, key string) error {
+	deployment, err := clientset.AppsV1().Deployments(namespace).Get(ctx, target, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get deployment for snapshot: %w", err)
+	}
+	if _, exists := a.OriginalReplicas[key]; !exists {
+		if deployment.Spec.Replicas != nil {
+			a.OriginalReplicas[key] = *deployment.Spec.Replicas
+		} else {
+			a.OriginalReplicas[key] = 1
+		}
+	}
+	if _, exists := a.OriginalSelector[key]; !exists {
+		if deployment.Spec.Template.Spec.NodeSelector != nil {
+			orig := make(map[string]string)
+			for k, v := range deployment.Spec.Template.Spec.NodeSelector {
+				orig[k] = v
+			}
+			a.OriginalSelector[key] = orig
+		} else {
+			a.OriginalSelector[key] = nil
+		}
+	}
+	return nil
+}
+
+func (a *MigrateServiceAction) patchAndScaleDown(ctx context.Context, clientset *kubernetes.Clientset, namespace, target, targetNode, key string) error {
+	deploymentsClient := clientset.AppsV1().Deployments(namespace)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		deployment, getErr := deploymentsClient.Get(ctx, target, metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("failed to get deployment for migration: %w", getErr)
+		}
+		deployment.Spec.Template.Spec.NodeSelector = map[string]string{
+			"kubernetes.io/hostname": targetNode,
+		}
+		zero := int32(0)
+		deployment.Spec.Replicas = &zero
+		_, updateErr := deploymentsClient.Update(ctx, deployment, metav1.UpdateOptions{})
+		return updateErr
+	})
+}
+
+func (a *MigrateServiceAction) waitForPodsTerminated(ctx context.Context, clientset *kubernetes.Clientset, namespace, target string) error {
+	for i := 0; i < 30; i++ {
+		pods, listErr := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("app=%s", target),
+		})
+		if listErr != nil {
+			return nil // best-effort wait
+		}
+		if len(pods.Items) == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for pods to terminate")
+		case <-time.After(1 * time.Second):
+		}
+	}
+	return nil
+}
+
+func (a *MigrateServiceAction) scaleUpOnTarget(ctx context.Context, clientset *kubernetes.Clientset, namespace, target string, replicas int32, key string) error {
+	desired := replicas
+	if desired <= 0 {
+		desired = a.OriginalReplicas[key]
+	}
+	deploymentsClient := clientset.AppsV1().Deployments(namespace)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		deployment, getErr := deploymentsClient.Get(ctx, target, metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("failed to get deployment for scale up: %w", getErr)
+		}
+		deployment.Spec.Replicas = &desired
+		_, updateErr := deploymentsClient.Update(ctx, deployment, metav1.UpdateOptions{})
+		return updateErr
+	})
+}
+
+func (a *MigrateServiceAction) Rollback(ctx context.Context, namespace, target string, config json.RawMessage) error {
+	clientset, err := getK8sClient(a.clients)
+	if err != nil {
+		return err
+	}
+
+	key := fmt.Sprintf("%s/%s", namespace, target)
+	deploymentsClient := clientset.AppsV1().Deployments(namespace)
+
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		deployment, getErr := deploymentsClient.Get(ctx, target, metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("failed to get deployment for rollback: %w", getErr)
+		}
+
+		// Restore original nodeSelector
+		if origSelector, exists := a.OriginalSelector[key]; exists {
+			deployment.Spec.Template.Spec.NodeSelector = origSelector
+		} else {
+			deployment.Spec.Template.Spec.NodeSelector = nil
+		}
+
+		// Restore original replicas
+		origReplicas := int32(1)
+		if r, exists := a.OriginalReplicas[key]; exists {
+			origReplicas = r
+		}
+		deployment.Spec.Replicas = &origReplicas
+
+		_, updateErr := deploymentsClient.Update(ctx, deployment, metav1.UpdateOptions{})
+		return updateErr
+	})
+	if err != nil {
+		return fmt.Errorf("failed to rollback migration: %w", err)
+	}
+
+	delete(a.OriginalReplicas, key)
+	delete(a.OriginalSelector, key)
+	return nil
 }
 
 func findContainerIndex(deployment *appsv1.Deployment, preferredName string) (int, error) {

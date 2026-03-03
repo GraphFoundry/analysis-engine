@@ -23,6 +23,7 @@ const (
 	StatusAwaitingRecovery = "AwaitingRecovery"
 	StatusRecovering       = "Recovering"
 	StatusCompleted        = "Completed"
+	StatusAccepted         = "Accepted"
 	StatusAborted          = "Aborted"
 	StatusFailed           = "Failed"
 
@@ -36,8 +37,9 @@ var (
 )
 
 type recoveryTrigger struct {
-	Source      string
-	MarkAborted bool
+	Source       string
+	MarkAborted  bool
+	SkipRollback bool
 }
 
 type DrillRuntimeState struct {
@@ -343,21 +345,30 @@ func (e *Engine) runStateMachine(ctx context.Context, run *storage.DrillRun, ses
 	case <-time.After(observeTime):
 		run.Verdict = "Success"
 		recovery = e.awaitRecoveryAuthorization(ctx, run, session)
-		if recovery.MarkAborted {
+		switch {
+		case recovery.MarkAborted:
 			run.Verdict = "Aborted"
+		case recovery.SkipRollback:
+			run.Verdict = "Accepted"
 		}
 	}
 
 	// 4. Recovery
-	e.updateStatus(run, StatusRecovering)
-	e.logStep(run.ID, "Recovery", e.recoveryInitiationMessage(recovery), "Ok")
-
-	// Use background context for rollback just in case main ctx was cancelled.
-	if err := action.Rollback(context.Background(), namespace, run.Target, run.Config); err != nil {
-		e.logStep(run.ID, "Recovery", fmt.Sprintf("Rollback failed: %v", err), "Error")
-		run.Verdict = "Partial/Fail"
+	if recovery.SkipRollback {
+		// Operator accepted the current cluster state — skip rollback entirely.
+		e.updateStatus(run, StatusAccepted)
+		e.logStep(run.ID, "Recovery", "Operator accepted current cluster state; rollback skipped", "Ok")
 	} else {
-		e.logStep(run.ID, "Recovery", "Rollback successful", "Ok")
+		e.updateStatus(run, StatusRecovering)
+		e.logStep(run.ID, "Recovery", e.recoveryInitiationMessage(recovery), "Ok")
+
+		// Use background context for rollback just in case main ctx was cancelled.
+		if err := action.Rollback(context.Background(), namespace, run.Target, run.Config); err != nil {
+			e.logStep(run.ID, "Recovery", fmt.Sprintf("Rollback failed: %v", err), "Error")
+			run.Verdict = "Partial/Fail"
+		} else {
+			e.logStep(run.ID, "Recovery", "Rollback successful", "Ok")
+		}
 	}
 
 	// 5. Post Snapshot
@@ -371,9 +382,12 @@ func (e *Engine) runStateMachine(ctx context.Context, run *storage.DrillRun, ses
 	// Finalize
 	endTime := time.Now().UTC().Format(time.RFC3339)
 	run.EndTime = &endTime
-	if run.Verdict == "Aborted" {
+	switch run.Verdict {
+	case "Aborted":
 		e.updateStatus(run, StatusAborted)
-	} else {
+	case "Accepted":
+		e.updateStatus(run, StatusAccepted)
+	default:
 		e.updateStatus(run, StatusCompleted)
 	}
 	e.logStep(run.ID, "Finalize", "Drill completed", "Ok")
@@ -406,6 +420,8 @@ func (e *Engine) recoveryInitiationMessage(trigger recoveryTrigger) string {
 		return "Emergency rollback initiated (source: abort)"
 	case "failsafe":
 		return "Failsafe timeout reached; initiating rollback (source: failsafe)"
+	case "accept":
+		return "Operator accepted current state; rollback skipped (source: accept)"
 	default:
 		return "Initiating rollback"
 	}
@@ -440,6 +456,20 @@ func (e *Engine) AbortDrill(runID string) error {
 
 	session.cancel()
 	return nil
+}
+
+func (e *Engine) AcceptDrill(runID string) error {
+	raw, ok := e.active.Load(runID)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrDrillNotRecoverable, runID)
+	}
+	session, ok := raw.(*drillSession)
+	if !ok || session == nil {
+		return fmt.Errorf("%w: %s", ErrDrillNotRecoverable, runID)
+	}
+
+	_, err := session.requestRecovery(recoveryTrigger{Source: "accept", SkipRollback: true})
+	return err
 }
 
 func (e *Engine) RecoverDrill(runID string) error {

@@ -5,7 +5,7 @@ DOCKER_IMAGE=predictive-analysis-engine-go
 PORT=5000
 
 build:
-	go build -o $(BINARY_NAME) ./cmd/server
+	go build -o $(BINARY_NAME) ./cmd/analysis-engine
 
 run: build
 	./$(BINARY_NAME)
@@ -27,7 +27,7 @@ docker-run:
 
 
 swagger:
-	go run github.com/swaggo/swag/v2/cmd/swag@latest init -g cmd/server/main.go --output docs --v3.1
+	go run github.com/swaggo/swag/v2/cmd/swag@latest init -g cmd/analysis-engine/main.go --output docs --v3.1
 
 swagger-check: swagger
 	if [ -n "$$(git status --porcelain docs)" ]; then \

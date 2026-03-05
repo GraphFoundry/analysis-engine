@@ -1,9 +1,12 @@
-# Build stage
-FROM golang:1.22-alpine AS builder
+# ── Build stage ──────────────────────────────────────────────
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
-# Copy go mod and sum files
+# Install build toolchain (gcc required by mattn/go-sqlite3 CGO)
+RUN apk add --no-cache build-base
+
+# Cache module downloads before copying source
 COPY go.mod go.sum ./
 RUN go mod download
 
@@ -11,44 +14,45 @@ RUN go mod download
 COPY cmd/ ./cmd/
 COPY pkg/ ./pkg/
 
-# Build the application
-# CGO_ENABLED=1 is needed for go-sqlite3, which requires gcc. 
-# So we need to install build-base in alpine.
-RUN apk add --no-cache build-base
-RUN CGO_ENABLED=1 GOOS=linux go build -o predictive-analysis-engine ./cmd/server
+# Build a stripped binary (CGO_ENABLED=1 is mandatory for go-sqlite3)
+RUN CGO_ENABLED=1 GOOS=linux go build \
+    -ldflags="-s -w" \
+    -o predictive-analysis-engine \
+    ./cmd/analysis-engine
 
-# Production stage
-FROM alpine:3.19
+# ── Production stage ────────────────────────────────────────
+FROM alpine:3.21
 
 WORKDIR /app
 
-# Create non-root user (matching Node Dockerfile)
+# Create non-root user
 RUN addgroup -g 1001 appgroup && \
     adduser -u 1001 -G appgroup -s /bin/sh -D appuser
 
-# Install runtime dependencies (sqlite libs if dynamic, but also wget for healthcheck)
-# ca-certificates for HTTPS
+# Runtime dependencies: sqlite-libs (dynamic link), ca-certificates (TLS), wget (healthcheck)
 RUN apk add --no-cache ca-certificates wget sqlite-libs
 
 # Copy binary from builder
 COPY --from=builder /app/predictive-analysis-engine .
 
-# Create data directory for SQLite
-RUN mkdir -p /app/data && \
-    chown -R appuser:appgroup /app/data
+# Swagger docs served at runtime via http.ServeFile
+COPY docs/swagger.json docs/swagger.yaml ./docs/
 
-# Set ownership
-RUN chown -R appuser:appgroup /app
+# Demo seed data used by /demo/snapshots endpoint
+COPY data/demo/ ./data/demo/
+
+# Create writable data directory for SQLite (will be volume-mounted in production)
+RUN mkdir -p /app/data && \
+    chown -R appuser:appgroup /app
 
 # Switch to non-root user
 USER appuser
 
-# Expose port (default 5000)
+# Default port (overridable via PORT env var)
 EXPOSE 5000
 
-# Health check (Parity with Node: wget -qO- http://localhost:${PORT:-5000}/health || exit 1)
+# Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -qO- http://localhost:${PORT:-5000}/health || exit 1
 
-# Start server
 CMD ["./predictive-analysis-engine"]

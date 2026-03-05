@@ -1,0 +1,34 @@
+# Secrets & config
+.env
+.env.*
+!.env.example
+.drills-kubeconfig
+
+# Built binaries
+bin/
+analysis-engine
+!analysis-engine/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# SQLite runtime data
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# VCS & IDE
+.git/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+
+# Dev artifacts
+Makefile
+README.md
+*.pem
+*.test
+*.out
+docs/docs.go

@@ -77,6 +77,33 @@ func (s *DecisionStore) initSchema() error {
 
 	CREATE INDEX IF NOT EXISTS idx_webhook_events_first_seen_at ON webhook_events(first_seen_at);
 	CREATE INDEX IF NOT EXISTS idx_webhook_events_source ON webhook_events(source);
+
+	CREATE TABLE IF NOT EXISTS drill_runs (
+		id TEXT PRIMARY KEY,
+		type TEXT NOT NULL,
+		target TEXT NOT NULL,
+		status TEXT NOT NULL,
+		start_time TEXT NOT NULL,
+		end_time TEXT,
+		config TEXT NOT NULL,
+		pre_snapshot TEXT,
+		post_snapshot TEXT,
+		verdict TEXT,
+		created_at TEXT DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS drill_steps (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		run_id TEXT NOT NULL,
+		timestamp TEXT NOT NULL,
+		phase TEXT NOT NULL,
+		message TEXT NOT NULL,
+		status TEXT NOT NULL,
+		FOREIGN KEY (run_id) REFERENCES drill_runs(id) ON DELETE CASCADE
+	);
+	
+	CREATE INDEX IF NOT EXISTS idx_drill_runs_status ON drill_runs(status);
+	CREATE INDEX IF NOT EXISTS idx_drill_steps_run_id ON drill_steps(run_id);
 	`
 	_, err := s.db.Exec(schema)
 	if err != nil {

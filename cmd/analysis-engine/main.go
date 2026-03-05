@@ -18,6 +18,7 @@ import (
 	"predictive-analysis-engine/pkg/clients/graph"
 	"predictive-analysis-engine/pkg/clients/telemetry"
 	"predictive-analysis-engine/pkg/config"
+	"predictive-analysis-engine/pkg/drills"
 	"predictive-analysis-engine/pkg/simulation"
 	"predictive-analysis-engine/pkg/storage"
 	"predictive-analysis-engine/pkg/worker"
@@ -68,6 +69,21 @@ func main() {
 	decisionsHandler := &api.DecisionsHandler{Store: store}
 	telemetryHandler := &api.TelemetryHandler{Client: telemetryClient, Cfg: cfg}
 
+	drillEngine := drills.NewEngine(store, graphClient, telemetryClient, drills.EngineOptions{
+		K8sClientOptions: drills.K8sClientOptions{
+			KubeconfigPath: cfg.Drills.KubeconfigPath,
+			KubeContext:    cfg.Drills.KubeContext,
+			APIServer:      cfg.Drills.KubeAPIServer,
+		},
+		TargetedLoad: drills.TargetedLoadActionOptions{
+			DeploymentName: cfg.Drills.LoadGeneratorDeployment,
+			ContainerName:  cfg.Drills.LoadGeneratorContainer,
+			RateEnvName:    cfg.Drills.TargetedLoadRateEnv,
+			UsersEnvName:   cfg.Drills.TargetedLoadUsersEnv,
+		},
+	})
+	drillsHandler := &api.DrillsHandler{Engine: drillEngine, Store: store}
+
 	r := chi.NewRouter()
 
 	r.Use(api.CORSMiddleware)
@@ -94,6 +110,7 @@ func main() {
 	r.Get("/dependency-graph/snapshot", apiHandler.DependencyGraphHandler)
 
 	decisionsHandler.RegisterRoutes(r)
+	drillsHandler.RegisterRoutes(r)
 	r.Mount("/telemetry", telemetryHandler.Routes())
 
 	// Webhook endpoint: receives graph updates from service-graph-engine

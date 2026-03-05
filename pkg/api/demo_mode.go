@@ -41,9 +41,17 @@ type demoSnapshotEdge struct {
 	P99       float64 `json:"p99"`
 }
 
+const (
+	demoSnapshotSeedV1     = "seed-v1"
+	demoFailureServiceID   = "default:checkoutservice"
+	demoScaleServiceID     = "default:recommendationservice"
+	demoScaleExpectedPods  = 2
+	demoScaleProjectedPods = 5
+)
+
 var supportedDemoSnapshots = []demoSnapshotInfo{
 	{
-		ID:          "seed-v1",
+		ID:          demoSnapshotSeedV1,
 		Label:       "Seed Snapshot v1",
 		Description: "Deterministic snapshot used for panel demonstration fallback mode.",
 	},
@@ -55,13 +63,13 @@ func listDemoSnapshots() []demoSnapshotInfo {
 
 func loadDemoFailureResult(req simulation.FailureSimulationRequest, snapshotID string) (*simulation.FailureSimulationResult, error) {
 	id := normalizeDemoSnapshotID(snapshotID)
-	if id != "seed-v1" {
+	if id != demoSnapshotSeedV1 {
 		return nil, fmt.Errorf("unsupported snapshotId %q", snapshotID)
 	}
 
 	serviceID := normalizeServiceID(req.ServiceId)
-	if serviceID != "default:checkoutservice" {
-		return nil, fmt.Errorf("demo mode only supports failure scenario for default:checkoutservice")
+	if serviceID != demoFailureServiceID {
+		return nil, fmt.Errorf("demo mode only supports failure scenario for %s", demoFailureServiceID)
 	}
 
 	filePath := filepath.Join("data", "demo", "scenarios", "failure-checkoutservice.json")
@@ -92,20 +100,20 @@ func loadDemoFailureResult(req simulation.FailureSimulationRequest, snapshotID s
 
 func loadDemoScalingResult(req simulation.ScalingSimulationRequest, snapshotID string) (*simulation.ScalingSimulationResult, error) {
 	id := normalizeDemoSnapshotID(snapshotID)
-	if id != "seed-v1" {
+	if id != demoSnapshotSeedV1 {
 		return nil, fmt.Errorf("unsupported snapshotId %q", snapshotID)
 	}
 
 	serviceID := normalizeServiceID(req.ServiceId)
-	if serviceID != "default:recommendationservice" {
-		return nil, fmt.Errorf("demo mode only supports scaling scenario for default:recommendationservice")
+	if serviceID != demoScaleServiceID {
+		return nil, fmt.Errorf("demo mode only supports scaling scenario for %s", demoScaleServiceID)
 	}
 
-	if req.CurrentPods > 0 && req.CurrentPods != 2 {
-		return nil, fmt.Errorf("demo mode scaling scenario expects currentPods=2")
+	if req.CurrentPods > 0 && req.CurrentPods != demoScaleExpectedPods {
+		return nil, fmt.Errorf("demo mode scaling scenario expects currentPods=%d", demoScaleExpectedPods)
 	}
-	if req.NewPods > 0 && req.NewPods != 5 {
-		return nil, fmt.Errorf("demo mode scaling scenario expects newPods=5")
+	if req.NewPods > 0 && req.NewPods != demoScaleProjectedPods {
+		return nil, fmt.Errorf("demo mode scaling scenario expects newPods=%d", demoScaleProjectedPods)
 	}
 
 	filePath := filepath.Join("data", "demo", "scenarios", "scale-recommendationservice.json")
@@ -129,15 +137,15 @@ func loadDemoScalingResult(req simulation.ScalingSimulationRequest, snapshotID s
 	result.SourceMode = "demo"
 	result.SnapshotId = id
 	result.Neighborhood.DepthUsed = depth
-	result.CurrentPods = 2
-	result.NewPods = 5
+	result.CurrentPods = demoScaleExpectedPods
+	result.NewPods = demoScaleProjectedPods
 
 	return &result, nil
 }
 
 func loadDemoSimulationContext(serviceID string, k int, direction string, snapshotID string) (*simulation.SimulationContextResponse, error) {
 	id := normalizeDemoSnapshotID(snapshotID)
-	if id != "seed-v1" {
+	if id != demoSnapshotSeedV1 {
 		return nil, fmt.Errorf("unsupported snapshotId %q", snapshotID)
 	}
 
@@ -156,7 +164,7 @@ func loadDemoSimulationContext(serviceID string, k int, direction string, snapsh
 		return nil, fmt.Errorf("direction must be one of: both, in, out")
 	}
 
-	filePath := filepath.Join("data", "demo", "snapshots", "seed-v1.json")
+	filePath := filepath.Join("data", "demo", "snapshots", demoSnapshotSeedV1+".json")
 	var snapshot demoSnapshotFile
 	if err := loadDemoJSON(filePath, &snapshot); err != nil {
 		return nil, err

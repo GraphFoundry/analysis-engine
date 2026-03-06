@@ -659,9 +659,10 @@ func getK8sClient(factory *K8sClientFactory) (*kubernetes.Clientset, error) {
 // MigrateServiceAction migrates a service's pods to a specific target node.
 // It uses nodeSelector patching + scale-down/up to force pod rescheduling.
 type MigrateServiceAction struct {
-	clients          *K8sClientFactory
-	OriginalReplicas map[string]int32
-	OriginalSelector map[string]map[string]string // saved nodeSelector for rollback
+	clients           *K8sClientFactory
+	OriginalReplicas  map[string]int32
+	OriginalSelector  map[string]map[string]string // saved nodeSelector for rollback
+	OriginalScheduler map[string]string            // saved schedulerName for rollback
 }
 
 func NewMigrateServiceAction(clients ...*K8sClientFactory) *MigrateServiceAction {
@@ -670,9 +671,10 @@ func NewMigrateServiceAction(clients ...*K8sClientFactory) *MigrateServiceAction
 		clientFactory = clients[0]
 	}
 	return &MigrateServiceAction{
-		clients:          clientFactory,
-		OriginalReplicas: make(map[string]int32),
-		OriginalSelector: make(map[string]map[string]string),
+		clients:           clientFactory,
+		OriginalReplicas:  make(map[string]int32),
+		OriginalSelector:  make(map[string]map[string]string),
+		OriginalScheduler: make(map[string]string),
 	}
 }
 
@@ -731,6 +733,9 @@ func (a *MigrateServiceAction) saveOriginalState(ctx context.Context, clientset 
 			a.OriginalSelector[key] = nil
 		}
 	}
+	if _, exists := a.OriginalScheduler[key]; !exists {
+		a.OriginalScheduler[key] = deployment.Spec.Template.Spec.SchedulerName
+	}
 	return nil
 }
 
@@ -740,6 +745,15 @@ func (a *MigrateServiceAction) patchAndScaleDown(ctx context.Context, clientset 
 		deployment, getErr := deploymentsClient.Get(ctx, target, metav1.GetOptions{})
 		if getErr != nil {
 			return fmt.Errorf("failed to get deployment for migration: %w", getErr)
+		}
+		schedulerName := strings.TrimSpace(deployment.Spec.Template.Spec.SchedulerName)
+		if schedulerName != "" && schedulerName != "default-scheduler" {
+			return fmt.Errorf(
+				"migration blocked for %s/%s: unsupported schedulerName %q (requires default scheduler to honor nodeSelector migration)",
+				namespace,
+				target,
+				schedulerName,
+			)
 		}
 		deployment.Spec.Template.Spec.NodeSelector = map[string]string{
 			"kubernetes.io/hostname": targetNode,
@@ -757,7 +771,7 @@ func (a *MigrateServiceAction) waitForPodsTerminated(ctx context.Context, client
 			LabelSelector: fmt.Sprintf("app=%s", target),
 		})
 		if listErr != nil {
-			return nil // best-effort wait
+			return fmt.Errorf("failed to list pods while waiting for termination: %w", listErr)
 		}
 		if len(pods.Items) == 0 {
 			return nil
@@ -768,7 +782,18 @@ func (a *MigrateServiceAction) waitForPodsTerminated(ctx context.Context, client
 		case <-time.After(1 * time.Second):
 		}
 	}
-	return nil
+	pods, listErr := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("app=%s", target),
+	})
+	if listErr != nil {
+		return fmt.Errorf("timed out waiting for pods to terminate and failed final pod listing: %w", listErr)
+	}
+	remaining := make([]string, 0, len(pods.Items))
+	for _, pod := range pods.Items {
+		remaining = append(remaining, pod.Name)
+	}
+	sort.Strings(remaining)
+	return fmt.Errorf("timed out waiting for pods to terminate for %s/%s; remaining pods: %s", namespace, target, strings.Join(remaining, ", "))
 }
 
 func (a *MigrateServiceAction) scaleUpOnTarget(ctx context.Context, clientset *kubernetes.Clientset, namespace, target string, replicas int32, key string) error {
@@ -777,7 +802,7 @@ func (a *MigrateServiceAction) scaleUpOnTarget(ctx context.Context, clientset *k
 		desired = a.OriginalReplicas[key]
 	}
 	deploymentsClient := clientset.AppsV1().Deployments(namespace)
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		deployment, getErr := deploymentsClient.Get(ctx, target, metav1.GetOptions{})
 		if getErr != nil {
 			return fmt.Errorf("failed to get deployment for scale up: %w", getErr)
@@ -785,7 +810,54 @@ func (a *MigrateServiceAction) scaleUpOnTarget(ctx context.Context, clientset *k
 		deployment.Spec.Replicas = &desired
 		_, updateErr := deploymentsClient.Update(ctx, deployment, metav1.UpdateOptions{})
 		return updateErr
-	})
+	}); err != nil {
+		return err
+	}
+	return a.waitForDeploymentReady(ctx, clientset, namespace, target, desired)
+}
+
+func (a *MigrateServiceAction) waitForDeploymentReady(ctx context.Context, clientset *kubernetes.Clientset, namespace, target string, desired int32) error {
+	deadline := time.Now().Add(2 * time.Minute)
+	deploymentsClient := clientset.AppsV1().Deployments(namespace)
+
+	for {
+		deployment, err := deploymentsClient.Get(ctx, target, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to fetch deployment status for %s/%s: %w", namespace, target, err)
+		}
+
+		observed := deployment.Status.ObservedGeneration >= deployment.Generation
+		if desired == 0 {
+			if observed && deployment.Status.Replicas == 0 && deployment.Status.ReadyReplicas == 0 {
+				return nil
+			}
+		} else if observed &&
+			deployment.Status.UpdatedReplicas >= desired &&
+			deployment.Status.ReadyReplicas >= desired &&
+			deployment.Status.AvailableReplicas >= desired {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf(
+				"deployment %s/%s not ready after 2m (desired=%d observed=%d/%d updated=%d ready=%d available=%d)",
+				namespace,
+				target,
+				desired,
+				deployment.Status.ObservedGeneration,
+				deployment.Generation,
+				deployment.Status.UpdatedReplicas,
+				deployment.Status.ReadyReplicas,
+				deployment.Status.AvailableReplicas,
+			)
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context canceled while waiting for deployment %s/%s readiness", namespace, target)
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 func (a *MigrateServiceAction) Rollback(ctx context.Context, namespace, target string, config json.RawMessage) error {
@@ -796,6 +868,10 @@ func (a *MigrateServiceAction) Rollback(ctx context.Context, namespace, target s
 
 	key := fmt.Sprintf("%s/%s", namespace, target)
 	deploymentsClient := clientset.AppsV1().Deployments(namespace)
+	origReplicas := int32(1)
+	if r, exists := a.OriginalReplicas[key]; exists {
+		origReplicas = r
+	}
 
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		deployment, getErr := deploymentsClient.Get(ctx, target, metav1.GetOptions{})
@@ -809,12 +885,11 @@ func (a *MigrateServiceAction) Rollback(ctx context.Context, namespace, target s
 		} else {
 			deployment.Spec.Template.Spec.NodeSelector = nil
 		}
+		if schedulerName, exists := a.OriginalScheduler[key]; exists {
+			deployment.Spec.Template.Spec.SchedulerName = schedulerName
+		}
 
 		// Restore original replicas
-		origReplicas := int32(1)
-		if r, exists := a.OriginalReplicas[key]; exists {
-			origReplicas = r
-		}
 		deployment.Spec.Replicas = &origReplicas
 
 		_, updateErr := deploymentsClient.Update(ctx, deployment, metav1.UpdateOptions{})
@@ -823,9 +898,13 @@ func (a *MigrateServiceAction) Rollback(ctx context.Context, namespace, target s
 	if err != nil {
 		return fmt.Errorf("failed to rollback migration: %w", err)
 	}
+	if err := a.waitForDeploymentReady(ctx, clientset, namespace, target, origReplicas); err != nil {
+		return fmt.Errorf("rollback completed but deployment did not recover: %w", err)
+	}
 
 	delete(a.OriginalReplicas, key)
 	delete(a.OriginalSelector, key)
+	delete(a.OriginalScheduler, key)
 	return nil
 }
 

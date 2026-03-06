@@ -44,9 +44,10 @@ type RateLimitConfig struct {
 }
 
 type InfluxConfig struct {
-	Host     string
-	Token    string
-	Database string
+	Host      string
+	Token     string
+	TokenFile string
+	Database  string
 }
 
 type SQLiteConfig struct {
@@ -110,9 +111,10 @@ func Load() (*Config, error) {
 			MaxRequests: getEnvInt("RATE_LIMIT_MAX", 60),
 		},
 		Influx: InfluxConfig{
-			Host:     getEnv("INFLUX_HOST", ""),
-			Token:    getEnv("INFLUX_TOKEN", ""),
-			Database: getEnv("INFLUX_DATABASE", ""),
+			Host:      getEnv("INFLUX_HOST", ""),
+			Token:     getEnv("INFLUX_TOKEN", ""),
+			TokenFile: getEnv("INFLUX_TOKEN_FILE", ""),
+			Database:  getEnv("INFLUX_DATABASE", ""),
 		},
 		SQLite: SQLiteConfig{
 			DBPath: getEnv("SQLITE_DB_PATH", "./data/decisions.db"),

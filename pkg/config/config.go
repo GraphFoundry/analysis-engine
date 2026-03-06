@@ -27,6 +27,7 @@ type SimulationConfig struct {
 	MinLatencyFactor     float64
 	TimeoutMs            int
 	MaxPathsReturned     int
+	SharedHostResources  bool
 }
 
 type ServerConfig struct {
@@ -98,6 +99,7 @@ func Load() (*Config, error) {
 			MinLatencyFactor:     getEnvFloat("MIN_LATENCY_FACTOR", 0.6),
 			TimeoutMs:            getEnvInt("TIMEOUT_MS", 8000),
 			MaxPathsReturned:     getEnvInt("MAX_PATHS_RETURNED", 10),
+			SharedHostResources:  getEnv("SHARED_HOST_RESOURCES", "false") == "true",
 		},
 		Server: ServerConfig{
 			Port: getEnvInt("PORT", 5000),

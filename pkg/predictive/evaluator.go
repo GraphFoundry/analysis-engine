@@ -16,8 +16,14 @@ const (
 	capacityRAMThreshold       = 80.0
 	capacityCriticalThreshold  = 90.0
 	capacityServiceRPSThresh   = 30.0
+	capacityLatencyRPSThresh   = 150.0
+	capacityLatencyHighP95Ms   = 1500.0
+	capacityLatencyCriticalP95 = 3200.0
 	networkEdgeRPSThresh       = 35.0
 	networkTrafficIncreasePerc = 35.0
+	networkSustainedRPSThresh  = 90.0
+	networkSustainedP95Ms      = 180.0
+	stickyHoldEvaluations      = 4
 	maxScaleReplicas           = 8
 )
 
@@ -165,7 +171,7 @@ func (e *Evaluator) EvaluateFromSamples(
 
 	if e.stickyRecommendation != nil {
 		e.healthyStreak++
-		if e.healthyStreak < 2 {
+		if e.healthyStreak < stickyHoldEvaluations {
 			sticky := *e.stickyRecommendation
 			sticky.HealthScore = evaluated.HealthScore
 			sticky.Evidence.Timestamp = evaluated.Evidence.Timestamp
@@ -191,6 +197,7 @@ type capacityCandidate struct {
 	cpu         float64
 	ram         float64
 	rps         float64
+	p95         float64
 	currentPods int
 	severity    string
 }
@@ -204,6 +211,7 @@ type networkCandidate struct {
 	rps               float64
 	p95               float64
 	trafficIncreasePc float64
+	detectionMode     string
 }
 
 func (e *Evaluator) evaluateLocked(
@@ -258,12 +266,14 @@ func (e *Evaluator) evaluateLocked(
 		if metric.RPS < capacityServiceRPSThresh {
 			continue
 		}
-		if cpu < capacityCPUThreshold && ram < capacityRAMThreshold {
+		resourcePressure := cpu >= capacityCPUThreshold || ram >= capacityRAMThreshold
+		latencyPressure := metric.RPS >= capacityLatencyRPSThresh && metric.P95 >= capacityLatencyHighP95Ms
+		if !resourcePressure && !latencyPressure {
 			continue
 		}
 
 		severity := "high"
-		if cpu >= capacityCriticalThreshold || ram >= capacityCriticalThreshold {
+		if cpu >= capacityCriticalThreshold || ram >= capacityCriticalThreshold || metric.P95 >= capacityLatencyCriticalP95 {
 			severity = "critical"
 		}
 
@@ -274,6 +284,7 @@ func (e *Evaluator) evaluateLocked(
 			cpu:         cpu,
 			ram:         ram,
 			rps:         metric.RPS,
+			p95:         metric.P95,
 			currentPods: maxInt(svc.PodCount, 1),
 			severity:    severity,
 		}
@@ -306,12 +317,20 @@ func (e *Evaluator) evaluateLocked(
 		}
 
 		prev := e.previousEdgeRPS[edgeKey(ns, edge.From, edge.To)]
-		if prev <= 0 {
+		trafficIncreasePc := 0.0
+		if prev > 0 {
+			trafficIncreasePc = ((edge.RPS - prev) / prev) * 100
+		}
+
+		isTrafficSurge := prev > 0 && trafficIncreasePc >= networkTrafficIncreasePerc
+		isSustainedPressure := edge.RPS >= networkSustainedRPSThresh && edge.P95 >= networkSustainedP95Ms
+		if !isTrafficSurge && !isSustainedPressure {
 			continue
 		}
-		trafficIncreasePc := ((edge.RPS - prev) / prev) * 100
-		if trafficIncreasePc < networkTrafficIncreasePerc {
-			continue
+
+		detectionMode := "surge"
+		if isSustainedPressure && !isTrafficSurge {
+			detectionMode = "sustained"
 		}
 
 		candidate := &networkCandidate{
@@ -323,6 +342,7 @@ func (e *Evaluator) evaluateLocked(
 			rps:               edge.RPS,
 			p95:               edge.P95,
 			trafficIncreasePc: trafficIncreasePc,
+			detectionMode:     detectionMode,
 		}
 		if betterNetworkCandidate(candidate, bestNetwork) {
 			bestNetwork = candidate
@@ -337,12 +357,12 @@ func (e *Evaluator) evaluateLocked(
 	case bestCapacity != nil && bestCapacity.severity == "critical":
 		selectedType = "capacity"
 		response = buildCapacityResponse(bestCapacity, response.Evidence.Timestamp)
-	case bestCapacity != nil:
-		selectedType = "capacity"
-		response = buildCapacityResponse(bestCapacity, response.Evidence.Timestamp)
 	case bestNetwork != nil:
 		selectedType = "network"
 		response = buildNetworkResponse(bestNetwork, response.Evidence.Timestamp)
+	case bestCapacity != nil:
+		selectedType = "capacity"
+		response = buildCapacityResponse(bestCapacity, response.Evidence.Timestamp)
 	default:
 		response = healthyResponse(now)
 	}
@@ -364,9 +384,13 @@ func buildCapacityResponse(candidate *capacityCandidate, timestamp string) Curre
 	}
 
 	severity := candidate.severity
-	message := "Node " + candidate.node + " hosting " + candidate.service + " is nearing resource exhaustion. Increase replicas now."
-	if candidate.node == "" {
-		message = candidate.service + " is nearing resource exhaustion. Increase replicas now."
+	resourceDriven := candidate.cpu >= capacityCPUThreshold || candidate.ram >= capacityRAMThreshold
+	message := candidate.service + " is nearing resource exhaustion. Increase replicas now."
+	if resourceDriven && candidate.node != "" {
+		message = "Node " + candidate.node + " hosting " + candidate.service + " is nearing resource exhaustion. Increase replicas now."
+	}
+	if !resourceDriven {
+		message = candidate.service + " latency is spiking under load. Scale replicas now to absorb traffic."
 	}
 
 	return CurrentActionResponse{
@@ -404,6 +428,11 @@ func buildNetworkResponse(candidate *networkCandidate, timestamp string) Current
 	timeToImpact := 240
 	message := "Cross-node traffic is surging between " + candidate.sourceService + " and " + candidate.targetService +
 		". Migrate " + candidate.targetService + " to " + candidate.sourceNode + " to reduce latency."
+	if candidate.detectionMode == "sustained" {
+		timeToImpact = 180
+		message = "Cross-node traffic remains heavy between " + candidate.sourceService + " and " + candidate.targetService +
+			". Co-locate services by moving " + candidate.targetService + " to " + candidate.sourceNode + "."
+	}
 
 	return CurrentActionResponse{
 		AnomalyActive: true,
@@ -481,8 +510,8 @@ func betterCapacityCandidate(candidate, current *capacityCandidate) bool {
 		return severityRank[candidate.severity] > severityRank[current.severity]
 	}
 
-	candidatePressure := math.Max(candidate.cpu, candidate.ram)
-	currentPressure := math.Max(current.cpu, current.ram)
+	candidatePressure := math.Max(math.Max(candidate.cpu, candidate.ram), math.Min(100, candidate.p95/20))
+	currentPressure := math.Max(math.Max(current.cpu, current.ram), math.Min(100, current.p95/20))
 	if candidatePressure != currentPressure {
 		return candidatePressure > currentPressure
 	}
@@ -501,6 +530,10 @@ func betterNetworkCandidate(candidate, current *networkCandidate) bool {
 	currentCanonical := isCanonicalScenarioPair(current.sourceService, current.targetService)
 	if candidateCanonical != currentCanonical {
 		return candidateCanonical
+	}
+
+	if candidate.detectionMode != current.detectionMode {
+		return candidate.detectionMode == "surge"
 	}
 
 	if candidate.trafficIncreasePc != current.trafficIncreasePc {
@@ -597,7 +630,13 @@ func computeHealthScore(
 	}
 
 	maxEdgeRPS := 0.0
+	maxServiceP95 := 0.0
 	if snapshot != nil {
+		for _, svc := range snapshot.Services {
+			if svc.P95 > maxServiceP95 {
+				maxServiceP95 = svc.P95
+			}
+		}
 		for _, edge := range snapshot.Edges {
 			if edge.RPS > maxEdgeRPS {
 				maxEdgeRPS = edge.RPS
@@ -614,6 +653,9 @@ func computeHealthScore(
 	}
 	if maxEdgeRPS > 35 {
 		penalty += math.Min(15, (maxEdgeRPS-35)*0.2)
+	}
+	if maxServiceP95 > 250 {
+		penalty += math.Min(28, (maxServiceP95-250)/110)
 	}
 	if selectedType == "capacity" && recommendation != nil && recommendation.Severity == "critical" {
 		penalty += 10

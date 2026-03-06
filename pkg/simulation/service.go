@@ -48,7 +48,7 @@ func (s *Service) RunScalingSimulation(ctx context.Context, req ScalingSimulatio
 }
 
 func (s *Service) RunAddSimulation(ctx context.Context, req AddSimulationRequest) (*AddSimulationResult, error) {
-	result, err := SimulateAddService(ctx, s.graphClient, req)
+	result, err := SimulateAddService(ctx, s.graphClient, s.config, req)
 	if err != nil {
 		return nil, err
 	}

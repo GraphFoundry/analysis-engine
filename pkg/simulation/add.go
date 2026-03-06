@@ -8,10 +8,11 @@ import (
 	"strings"
 
 	"predictive-analysis-engine/pkg/clients/graph"
+	"predictive-analysis-engine/pkg/config"
 )
 
 // SimulateAddService evaluates capacity and placement feasibility for a new service.
-func SimulateAddService(ctx context.Context, client *graph.Client, req AddSimulationRequest) (*AddSimulationResult, error) {
+func SimulateAddService(ctx context.Context, client *graph.Client, cfg *config.Config, req AddSimulationRequest) (*AddSimulationResult, error) {
 
 	if req.ServiceName == "" {
 		req.ServiceName = "new-service"
@@ -88,19 +89,21 @@ func SimulateAddService(ctx context.Context, client *graph.Client, req AddSimula
 		return nil, fmt.Errorf("No nodes found in cluster state. Cannot perform placement analysis.")
 	}
 
-	var minikubeNodes []*rawNode
-	for _, n := range rawNodes {
-		if strings.Contains(strings.ToLower(n.Name), "minikube") {
-			minikubeNodes = append(minikubeNodes, n)
+	// --- SHARED HOST RESOURCE DEDUPLICATION ---
+	// When nodes share the same physical host (e.g. minikube docker driver),
+	// standard reporting often reports the full host CPU/RAM for every node,
+	// leading to double-counting. Enable SHARED_HOST_RESOURCES=true to treat
+	// all nodes as a single shared resource pool.
+	if cfg.Simulation.SharedHostResources && len(rawNodes) > 1 {
+		var allNodes []*rawNode
+		for _, n := range rawNodes {
+			allNodes = append(allNodes, n)
 		}
-	}
-
-	if len(minikubeNodes) > 1 {
 
 		var sharedCpuTotal float64
 		var sharedRamTotal float64
 
-		for _, n := range minikubeNodes {
+		for _, n := range allNodes {
 			if float64(n.CPUCores) > sharedCpuTotal {
 				sharedCpuTotal = float64(n.CPUCores)
 			}
@@ -111,7 +114,7 @@ func SimulateAddService(ctx context.Context, client *graph.Client, req AddSimula
 
 		var sharedCpuUsed float64
 		var sharedRamUsed float64
-		for _, n := range minikubeNodes {
+		for _, n := range allNodes {
 			sharedCpuUsed += (n.CPUUsagePercent / 100.0) * float64(n.CPUCores)
 			sharedRamUsed += n.RAMUsedMB
 		}
@@ -119,7 +122,7 @@ func SimulateAddService(ctx context.Context, client *graph.Client, req AddSimula
 		sharedCpuAvailable := math.Max(0, sharedCpuTotal-sharedCpuUsed)
 		sharedRamAvailable := math.Max(0, sharedRamTotal-sharedRamUsed)
 
-		for _, n := range minikubeNodes {
+		for _, n := range allNodes {
 			nodeCpuAvail := math.Max(0, float64(n.CPUCores)-((n.CPUUsagePercent/100.0)*float64(n.CPUCores)))
 			nodeRamAvail := math.Max(0, n.RAMTotalMB-n.RAMUsedMB)
 

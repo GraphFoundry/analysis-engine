@@ -15,22 +15,25 @@ import (
 	"predictive-analysis-engine/pkg/clients/graph"
 	"predictive-analysis-engine/pkg/config"
 	"predictive-analysis-engine/pkg/logger"
+	"predictive-analysis-engine/pkg/predictive"
 	"predictive-analysis-engine/pkg/simulation"
 )
 
 type Handler struct {
-	Config            *config.Config
-	GraphClient       *graph.Client
-	SimulationService *simulation.Service
-	StartTime         time.Time
+	Config              *config.Config
+	GraphClient         *graph.Client
+	SimulationService   *simulation.Service
+	PredictiveEvaluator PredictiveActionEvaluator
+	StartTime           time.Time
 }
 
 func NewHandler(cfg *config.Config, graphClient *graph.Client, simService *simulation.Service) *Handler {
 	return &Handler{
-		Config:            cfg,
-		GraphClient:       graphClient,
-		SimulationService: simService,
-		StartTime:         time.Now(),
+		Config:              cfg,
+		GraphClient:         graphClient,
+		SimulationService:   simService,
+		PredictiveEvaluator: predictive.NewEvaluator(graphClient),
+		StartTime:           time.Now(),
 	}
 }
 

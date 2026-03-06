@@ -108,6 +108,7 @@ func main() {
 	r.Get("/simulations/capabilities", apiHandler.SimulationCapabilitiesHandler)
 	r.Get("/demo/snapshots", apiHandler.DemoSnapshotsHandler)
 	r.Get("/dependency-graph/snapshot", apiHandler.DependencyGraphHandler)
+	r.Get("/predictive/actions/current", apiHandler.PredictiveCurrentActionHandler)
 
 	decisionsHandler.RegisterRoutes(r)
 	drillsHandler.RegisterRoutes(r)

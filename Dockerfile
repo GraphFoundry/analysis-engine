@@ -10,7 +10,7 @@ COPY . .
 
 RUN CGO_ENABLED=1 GOOS=linux \
     go build -ldflags="-s -w" \
-    -o app ./cmd/analysis-engine
+    -o analysis-engine ./cmd/analysis-engine
 
 
 # ---------- Runtime stage ----------
@@ -24,4 +24,4 @@ EXPOSE 5000
 
 USER nonroot:nonroot
 
-CMD ["./app"]
+CMD ["./analysis-engine"]

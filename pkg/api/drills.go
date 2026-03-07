@@ -260,6 +260,7 @@ func (h *DrillsHandler) GetDrillRunSnapshot(w http.ResponseWriter, r *http.Reque
 		GraphSummary: buildDrillGraphSummary(graphSnapshot, targetService, targetNamespace, graphTimestamp),
 	}
 
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }

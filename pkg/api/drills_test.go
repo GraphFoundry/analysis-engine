@@ -101,6 +101,9 @@ func TestGetDrillRunSnapshotReturnsCrossLayerFields(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, res.StatusCode)
 	}
+	if got := res.Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("expected Cache-Control no-store, got %q", got)
+	}
 
 	var body drillRunSnapshotResponse
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {

@@ -19,6 +19,7 @@ type DrillsHandler struct {
 
 func (h *DrillsHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/drills", func(r chi.Router) {
+		r.Get("/catalog", h.ListScenarioCatalog)
 		r.Get("/k8s-health", h.K8sHealth)
 		r.Post("/plan", h.PlanDrill)
 		r.Post("/run", h.RunDrill)
@@ -34,6 +35,20 @@ type DrillPlanRequest struct {
 	Type   string          `json:"type"`
 	Target string          `json:"target"`
 	Config json.RawMessage `json:"config"`
+}
+
+type drillScenarioCatalogResponse struct {
+	Scenarios []drills.ScenarioCatalogItem `json:"scenarios"`
+}
+
+func (h *DrillsHandler) ListScenarioCatalog(w http.ResponseWriter, r *http.Request) {
+	scenarios := make([]drills.ScenarioCatalogItem, 0)
+	if h.Engine != nil {
+		scenarios = h.Engine.ScenarioCatalog()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(drillScenarioCatalogResponse{Scenarios: scenarios})
 }
 
 func (h *DrillsHandler) PlanDrill(w http.ResponseWriter, r *http.Request) {

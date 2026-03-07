@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,7 +68,10 @@ type SnapshotMetadata struct {
 // @Router /dependency-graph/snapshot [get]
 func (h *Handler) DependencyGraphHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	namespace := r.URL.Query().Get("namespace")
+	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
+	if namespace == "" {
+		namespace = strings.TrimSpace(h.Config.GraphAPI.Namespace)
+	}
 	if namespace == "" {
 		namespace = "default"
 	}

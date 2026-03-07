@@ -163,13 +163,21 @@ func (h *Handler) ServicesHandler(w http.ResponseWriter, r *http.Request) {
 		Placement    graph.ServicePlacement `json:"placement"`
 	}
 
+	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
+	if namespace == "" {
+		namespace = strings.TrimSpace(h.Config.GraphAPI.Namespace)
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
 	var services []ServiceItem
 	for _, s := range sRes.data {
 		ns := s.Namespace
 		if ns == "" {
 			ns = "default"
 		}
-		if ns != "default" {
+		if ns != namespace {
 			continue
 		}
 		services = append(services, ServiceItem{

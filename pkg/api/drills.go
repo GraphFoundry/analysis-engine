@@ -87,7 +87,9 @@ func (h *DrillsHandler) RunDrill(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.Engine.ExecuteDrill(req.RunID); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(strings.ToLower(err.Error()), "drill preflight failed") {
+		if errors.Is(err, drills.ErrRollbackGateBlocked) {
+			status = http.StatusConflict
+		} else if strings.Contains(strings.ToLower(err.Error()), "drill preflight failed") {
 			status = http.StatusPreconditionFailed
 		}
 		http.Error(w, err.Error(), status)

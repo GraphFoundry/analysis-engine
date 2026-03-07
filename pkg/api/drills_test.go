@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"predictive-analysis-engine/pkg/drills"
 	"predictive-analysis-engine/pkg/storage"
 
 	"github.com/go-chi/chi/v5"
@@ -44,6 +45,54 @@ func TestListScenarioCatalogMarksResponseNoStore(t *testing.T) {
 
 	if len(body.Scenarios) != 0 {
 		t.Fatalf("expected empty scenario list when engine is nil, got %d scenarios", len(body.Scenarios))
+	}
+}
+
+func TestRunDrillReturnsConflictWhenRollbackVerificationIsMissing(t *testing.T) {
+	store := newTestDecisionStore(t)
+	engine := drills.NewEngine(store, nil, nil)
+	handler := &DrillsHandler{Engine: engine, Store: store}
+
+	previous := storage.DrillRun{
+		ID:        "run-prev",
+		Type:      "UnsupportedType",
+		Target:    "default/checkoutservice",
+		Status:    drills.StatusCompleted,
+		StartTime: "2026-03-07T10:00:00Z",
+		Config:    json.RawMessage(`{"namespace":"default"}`),
+		Verdict:   "Success",
+	}
+	if err := store.InsertDrillRun(previous); err != nil {
+		t.Fatalf("InsertDrillRun(previous) failed: %v", err)
+	}
+
+	next := storage.DrillRun{
+		ID:        "run-next",
+		Type:      "UnsupportedType",
+		Target:    "default/paymentservice",
+		Status:    drills.StatusPlanned,
+		StartTime: "2026-03-07T10:05:00Z",
+		Config:    json.RawMessage(`{"namespace":"default"}`),
+		Verdict:   "Pending",
+	}
+	if err := store.InsertDrillRun(next); err != nil {
+		t.Fatalf("InsertDrillRun(next) failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/drills/run", strings.NewReader(`{"runId":"run-next"}`))
+	rec := httptest.NewRecorder()
+
+	handler.RunDrill(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d", http.StatusConflict, res.StatusCode)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, drills.ErrRollbackGateBlocked.Error()) {
+		t.Fatalf("expected clear rollback gate error in response body, got %q", body)
 	}
 }
 

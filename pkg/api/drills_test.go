@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"predictive-analysis-engine/pkg/storage"
 
@@ -109,8 +110,14 @@ func TestGetDrillRunSnapshotReturnsCrossLayerFields(t *testing.T) {
 	if body.RunID != "run-1" {
 		t.Fatalf("expected runId run-1, got %q", body.RunID)
 	}
+	if _, err := time.Parse(time.RFC3339, body.SnapshotTimestamp); err != nil {
+		t.Fatalf("expected snapshot timestamp in RFC3339, got %q", body.SnapshotTimestamp)
+	}
 	if body.VMState.Status != "Completed" {
 		t.Fatalf("expected VM state status Completed, got %q", body.VMState.Status)
+	}
+	if body.VMState.SourceTimestamp == nil || *body.VMState.SourceTimestamp != "2026-03-07T10:00:00Z" {
+		t.Fatalf("expected vm source timestamp 2026-03-07T10:00:00Z, got %v", body.VMState.SourceTimestamp)
 	}
 	if body.BackendMetrics.TargetService != "checkoutservice" {
 		t.Fatalf("expected target service checkoutservice, got %q", body.BackendMetrics.TargetService)
@@ -118,11 +125,20 @@ func TestGetDrillRunSnapshotReturnsCrossLayerFields(t *testing.T) {
 	if body.BackendMetrics.Baseline == nil || body.BackendMetrics.Final == nil {
 		t.Fatalf("expected baseline and final backend metrics, got baseline=%v final=%v", body.BackendMetrics.Baseline, body.BackendMetrics.Final)
 	}
+	if body.BackendMetrics.SourceTimestamp == nil || *body.BackendMetrics.SourceTimestamp != "2026-03-07T10:03:00Z" {
+		t.Fatalf("expected backend source timestamp 2026-03-07T10:03:00Z, got %v", body.BackendMetrics.SourceTimestamp)
+	}
 	if body.DashboardMetrics.Source != "drill_run_snapshots" {
 		t.Fatalf("expected dashboard source drill_run_snapshots, got %q", body.DashboardMetrics.Source)
 	}
+	if body.DashboardMetrics.SourceTimestamp == nil || *body.DashboardMetrics.SourceTimestamp != "2026-03-07T10:03:00Z" {
+		t.Fatalf("expected dashboard source timestamp 2026-03-07T10:03:00Z, got %v", body.DashboardMetrics.SourceTimestamp)
+	}
 	if body.GraphSummary.ServiceCount != 2 || body.GraphSummary.EdgeCount != 2 {
 		t.Fatalf("expected graph summary counts 2 services/2 edges, got %d/%d", body.GraphSummary.ServiceCount, body.GraphSummary.EdgeCount)
+	}
+	if body.GraphSummary.SourceTimestamp == nil || *body.GraphSummary.SourceTimestamp != "2026-03-07T10:03:00Z" {
+		t.Fatalf("expected graph source timestamp 2026-03-07T10:03:00Z, got %v", body.GraphSummary.SourceTimestamp)
 	}
 	if body.GraphSummary.Target == nil {
 		t.Fatalf("expected graph target metrics to be present")

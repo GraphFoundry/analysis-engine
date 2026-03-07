@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"predictive-analysis-engine/pkg/clients/graph"
 	"predictive-analysis-engine/pkg/drills"
@@ -105,17 +106,19 @@ type drillRunResponse struct {
 }
 
 type drillRunSnapshotResponse struct {
-	RunID            string                         `json:"runId"`
-	VMState          drillRunVMSnapshot             `json:"vmState"`
-	BackendMetrics   drillRunBackendMetricsSnapshot `json:"backendMetrics"`
-	DashboardMetrics drillRunDashboardSnapshot      `json:"dashboardMetrics"`
-	GraphSummary     drillRunGraphSummarySnapshot   `json:"graphSummary"`
+	RunID             string                         `json:"runId"`
+	SnapshotTimestamp string                         `json:"snapshotTimestamp"`
+	VMState           drillRunVMSnapshot             `json:"vmState"`
+	BackendMetrics    drillRunBackendMetricsSnapshot `json:"backendMetrics"`
+	DashboardMetrics  drillRunDashboardSnapshot      `json:"dashboardMetrics"`
+	GraphSummary      drillRunGraphSummarySnapshot   `json:"graphSummary"`
 }
 
 type drillRunVMSnapshot struct {
 	Status           string  `json:"status"`
 	Verdict          string  `json:"verdict"`
 	Target           string  `json:"target"`
+	SourceTimestamp  *string `json:"sourceTimestamp,omitempty"`
 	CanRecover       bool    `json:"canRecover"`
 	RecoveryDeadline *string `json:"recoveryDeadline,omitempty"`
 	RecoveryMode     string  `json:"recoveryMode,omitempty"`
@@ -123,21 +126,24 @@ type drillRunVMSnapshot struct {
 }
 
 type drillRunBackendMetricsSnapshot struct {
-	TargetService string                       `json:"targetService"`
-	Baseline      *drillRunServiceMetricValues `json:"baseline,omitempty"`
-	Final         *drillRunServiceMetricValues `json:"final,omitempty"`
+	TargetService   string                       `json:"targetService"`
+	SourceTimestamp *string                      `json:"sourceTimestamp,omitempty"`
+	Baseline        *drillRunServiceMetricValues `json:"baseline,omitempty"`
+	Final           *drillRunServiceMetricValues `json:"final,omitempty"`
 }
 
 type drillRunDashboardSnapshot struct {
-	Source   string                       `json:"source"`
-	Baseline *drillRunServiceMetricValues `json:"baseline,omitempty"`
-	Final    *drillRunServiceMetricValues `json:"final,omitempty"`
+	Source          string                       `json:"source"`
+	SourceTimestamp *string                      `json:"sourceTimestamp,omitempty"`
+	Baseline        *drillRunServiceMetricValues `json:"baseline,omitempty"`
+	Final           *drillRunServiceMetricValues `json:"final,omitempty"`
 }
 
 type drillRunGraphSummarySnapshot struct {
-	ServiceCount int                          `json:"serviceCount"`
-	EdgeCount    int                          `json:"edgeCount"`
-	Target       *drillRunServiceMetricValues `json:"target,omitempty"`
+	ServiceCount    int                          `json:"serviceCount"`
+	EdgeCount       int                          `json:"edgeCount"`
+	SourceTimestamp *string                      `json:"sourceTimestamp,omitempty"`
+	Target          *drillRunServiceMetricValues `json:"target,omitempty"`
 }
 
 type drillRunServiceMetricValues struct {
@@ -204,14 +210,17 @@ func (h *DrillsHandler) GetDrillRunSnapshot(w http.ResponseWriter, r *http.Reque
 	targetService, targetNamespace := resolveDrillTarget(run)
 	preSnapshot := decodeDrillMetricsSnapshot(run.PreSnapshot)
 	postSnapshot := decodeDrillMetricsSnapshot(run.PostSnapshot)
+	preTimestamp := extractDrillSnapshotTimestamp(preSnapshot)
+	postTimestamp := extractDrillSnapshotTimestamp(postSnapshot)
 
 	baseline := extractDrillServiceMetrics(preSnapshot, targetService, targetNamespace)
 	final := extractDrillServiceMetrics(postSnapshot, targetService, targetNamespace)
 
 	vmState := drillRunVMSnapshot{
-		Status:  run.Status,
-		Verdict: run.Verdict,
-		Target:  run.Target,
+		Status:          run.Status,
+		Verdict:         run.Verdict,
+		Target:          run.Target,
+		SourceTimestamp: extractDrillRunSourceTimestamp(run),
 	}
 	if h.Engine != nil {
 		if runtime := h.Engine.RuntimeState(id); runtime != nil {
@@ -229,21 +238,26 @@ func (h *DrillsHandler) GetDrillRunSnapshot(w http.ResponseWriter, r *http.Reque
 	if graphSnapshot == nil {
 		graphSnapshot = preSnapshot
 	}
+	graphTimestamp := extractDrillSnapshotTimestamp(graphSnapshot)
+	metricsTimestamp := chooseDrillSourceTimestamp(postTimestamp, preTimestamp)
 
 	resp := drillRunSnapshotResponse{
-		RunID:   run.ID,
-		VMState: vmState,
+		RunID:             run.ID,
+		SnapshotTimestamp: time.Now().UTC().Format(time.RFC3339),
+		VMState:           vmState,
 		BackendMetrics: drillRunBackendMetricsSnapshot{
-			TargetService: targetService,
-			Baseline:      baseline,
-			Final:         final,
+			TargetService:   targetService,
+			SourceTimestamp: metricsTimestamp,
+			Baseline:        baseline,
+			Final:           final,
 		},
 		DashboardMetrics: drillRunDashboardSnapshot{
-			Source:   "drill_run_snapshots",
-			Baseline: baseline,
-			Final:    final,
+			Source:          "drill_run_snapshots",
+			SourceTimestamp: metricsTimestamp,
+			Baseline:        baseline,
+			Final:           final,
 		},
-		GraphSummary: buildDrillGraphSummary(graphSnapshot, targetService, targetNamespace),
+		GraphSummary: buildDrillGraphSummary(graphSnapshot, targetService, targetNamespace, graphTimestamp),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -460,14 +474,50 @@ func extractDrillServiceMetrics(snapshot *graph.MetricsSnapshotResponse, service
 	return nil
 }
 
-func buildDrillGraphSummary(snapshot *graph.MetricsSnapshotResponse, service, namespace string) drillRunGraphSummarySnapshot {
+func buildDrillGraphSummary(snapshot *graph.MetricsSnapshotResponse, service, namespace string, sourceTimestamp *string) drillRunGraphSummarySnapshot {
 	if snapshot == nil {
 		return drillRunGraphSummarySnapshot{}
 	}
 
 	return drillRunGraphSummarySnapshot{
-		ServiceCount: len(snapshot.Services),
-		EdgeCount:    len(snapshot.Edges),
-		Target:       extractDrillServiceMetrics(snapshot, service, namespace),
+		ServiceCount:    len(snapshot.Services),
+		EdgeCount:       len(snapshot.Edges),
+		SourceTimestamp: sourceTimestamp,
+		Target:          extractDrillServiceMetrics(snapshot, service, namespace),
 	}
+}
+
+func extractDrillSnapshotTimestamp(snapshot *graph.MetricsSnapshotResponse) *string {
+	if snapshot == nil {
+		return nil
+	}
+	ts := strings.TrimSpace(snapshot.Timestamp)
+	if ts == "" {
+		return nil
+	}
+	return &ts
+}
+
+func extractDrillRunSourceTimestamp(run *storage.DrillRun) *string {
+	if run == nil {
+		return nil
+	}
+	if run.EndTime != nil {
+		end := strings.TrimSpace(*run.EndTime)
+		if end != "" {
+			return &end
+		}
+	}
+	start := strings.TrimSpace(run.StartTime)
+	if start == "" {
+		return nil
+	}
+	return &start
+}
+
+func chooseDrillSourceTimestamp(primary, fallback *string) *string {
+	if primary != nil {
+		return primary
+	}
+	return fallback
 }

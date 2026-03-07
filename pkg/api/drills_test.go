@@ -241,6 +241,126 @@ func TestGetDrillRunSnapshotComparisonIncludesMismatchAndMissingStatuses(t *test
 	}
 }
 
+func TestGetDrillRunSnapshotComparisonIncludesFieldLevelMismatches(t *testing.T) {
+	store := newTestDecisionStore(t)
+	handler := &DrillsHandler{Store: store}
+
+	run := storage.DrillRun{
+		ID:        "run-mismatch-fields",
+		Type:      "ServiceBrownout",
+		Target:    "checkoutservice",
+		Status:    "Failed",
+		StartTime: "2026-03-07T10:00:00Z",
+		Config:    json.RawMessage(`{"namespace":"default"}`),
+		Verdict:   "Failure",
+	}
+	if err := store.InsertDrillRun(run); err != nil {
+		t.Fatalf("InsertDrillRun() failed: %v", err)
+	}
+	run.PreSnapshot = json.RawMessage(`{
+		"timestamp":"2026-03-07T10:00:30Z",
+		"window":"5m",
+		"services":[
+			{"name":"checkoutservice","namespace":"default","rps":22.5,"errorRate":0.02,"p95":180,"podCount":2,"availability":0.98}
+		],
+		"edges":[
+			{"from":"frontend","to":"checkoutservice","namespace":"default","rps":22.5,"errorRate":0.02,"p95":180}
+		]
+	}`)
+	run.PostSnapshot = json.RawMessage(`{
+		"timestamp":"2026-03-07T10:03:00Z",
+		"window":"5m",
+		"services":[
+			{"name":"checkoutservice","namespace":"default","rps":18.0,"errorRate":0.05,"p95":220,"podCount":1,"availability":0.90}
+		],
+		"edges":[
+			{"from":"frontend","to":"checkoutservice","namespace":"default","rps":18.0,"errorRate":0.05,"p95":220}
+		]
+	}`)
+	if err := store.UpdateDrillRun(run); err != nil {
+		t.Fatalf("UpdateDrillRun() failed: %v", err)
+	}
+	if err := store.AddDrillStep(storage.DrillStep{
+		RunID:     run.ID,
+		Timestamp: "2026-03-07T10:01:00Z",
+		Phase:     "Execute",
+		Message:   "Action failed",
+		Status:    "Error",
+	}); err != nil {
+		t.Fatalf("AddDrillStep() failed: %v", err)
+	}
+
+	req := drillRunRequestWithID(http.MethodGet, "/drills/runs/run-mismatch-fields/snapshot", run.ID)
+	rec := httptest.NewRecorder()
+
+	handler.GetDrillRunSnapshot(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, res.StatusCode)
+	}
+
+	var body drillRunSnapshotResponse
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("expected valid json response: %v", err)
+	}
+
+	if body.Comparison.VM.Status != "mismatch" {
+		t.Fatalf("expected vm comparison mismatch, got %q", body.Comparison.VM.Status)
+	}
+	if body.Comparison.API.Status != "mismatch" {
+		t.Fatalf("expected api comparison mismatch, got %q", body.Comparison.API.Status)
+	}
+	if body.Comparison.UIMetrics.Status != "mismatch" {
+		t.Fatalf("expected ui metrics comparison mismatch, got %q", body.Comparison.UIMetrics.Status)
+	}
+	if body.Comparison.Graph.Status != "mismatch" {
+		t.Fatalf("expected graph comparison mismatch, got %q", body.Comparison.Graph.Status)
+	}
+
+	vmStatus, ok := findDrillMismatch(body.Comparison.VM.Mismatches, "status")
+	if !ok {
+		t.Fatalf("expected vm mismatch for status, got %+v", body.Comparison.VM.Mismatches)
+	}
+	if vmStatus.ExpectedValue != "Completed" || vmStatus.ActualValue != "Failed" {
+		t.Fatalf("expected vm status mismatch Completed->Failed, got %+v", vmStatus)
+	}
+
+	apiErrors, ok := findDrillMismatch(body.Comparison.API.Mismatches, "timeline.errorSteps")
+	if !ok {
+		t.Fatalf("expected api mismatch for timeline.errorSteps, got %+v", body.Comparison.API.Mismatches)
+	}
+	if apiErrors.ExpectedValue != "0" || apiErrors.ActualValue != "1" {
+		t.Fatalf("expected api timeline.errorSteps mismatch 0->1, got %+v", apiErrors)
+	}
+
+	uiRPS, ok := findDrillMismatch(body.Comparison.UIMetrics.Mismatches, "uiMetrics.rps")
+	if !ok {
+		t.Fatalf("expected ui mismatch for rps, got %+v", body.Comparison.UIMetrics.Mismatches)
+	}
+	if uiRPS.ExpectedValue != "22.5" || uiRPS.ActualValue != "18" {
+		t.Fatalf("expected ui rps mismatch 22.5->18, got %+v", uiRPS)
+	}
+
+	graphPods, ok := findDrillMismatch(body.Comparison.Graph.Mismatches, "graph.target.podCount")
+	if !ok {
+		t.Fatalf("expected graph mismatch for podCount, got %+v", body.Comparison.Graph.Mismatches)
+	}
+	if graphPods.ExpectedValue != "2" || graphPods.ActualValue != "1" {
+		t.Fatalf("expected graph podCount mismatch 2->1, got %+v", graphPods)
+	}
+}
+
+func findDrillMismatch(mismatches []drillRunFieldMismatch, metricName string) (drillRunFieldMismatch, bool) {
+	for _, mismatch := range mismatches {
+		if mismatch.MetricName == metricName {
+			return mismatch, true
+		}
+	}
+	return drillRunFieldMismatch{}, false
+}
+
 func newTestDecisionStore(t *testing.T) *storage.DecisionStore {
 	t.Helper()
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -170,8 +171,15 @@ type drillRunComparisonSnapshot struct {
 	Graph     drillRunLayerComparisonStatus `json:"graph"`
 }
 
+type drillRunFieldMismatch struct {
+	MetricName    string `json:"metricName"`
+	ExpectedValue string `json:"expectedValue"`
+	ActualValue   string `json:"actualValue"`
+}
+
 type drillRunLayerComparisonStatus struct {
-	Status string `json:"status"`
+	Status     string                  `json:"status"`
+	Mismatches []drillRunFieldMismatch `json:"mismatches,omitempty"`
 }
 
 func (h *DrillsHandler) GetDrillRun(w http.ResponseWriter, r *http.Request) {
@@ -555,21 +563,138 @@ func buildDrillRunComparison(
 	apiHasData := run != nil && len(run.Timeline) > 0
 	uiHasData := baseline != nil && final != nil
 	graphHasData := graphSnapshot != nil
+	vmMismatch := vmHasData && runFailed
+	apiMismatch := apiHasData && (runFailed || apiHasError)
+	uiMismatch := uiHasData && runFailed
+	graphMismatch := graphHasData && runFailed
 
 	return drillRunComparisonSnapshot{
-		VM: drillRunLayerComparisonStatus{
-			Status: resolveDrillLayerStatus(vmHasData, vmHasData && runFailed),
-		},
-		API: drillRunLayerComparisonStatus{
-			Status: resolveDrillLayerStatus(apiHasData, apiHasData && (runFailed || apiHasError)),
-		},
-		UIMetrics: drillRunLayerComparisonStatus{
-			Status: resolveDrillLayerStatus(uiHasData, uiHasData && runFailed),
-		},
-		Graph: drillRunLayerComparisonStatus{
-			Status: resolveDrillLayerStatus(graphHasData, graphHasData && runFailed),
-		},
+		VM: buildDrillLayerComparisonStatus(vmHasData, vmMismatch, buildDrillVMMismatches(run, vmMismatch)),
+		API: buildDrillLayerComparisonStatus(apiHasData, apiMismatch, buildDrillAPIMismatches(run, apiMismatch)),
+		UIMetrics: buildDrillLayerComparisonStatus(
+			uiHasData,
+			uiMismatch,
+			buildDrillMetricMismatches("uiMetrics", baseline, final),
+		),
+		Graph: buildDrillLayerComparisonStatus(
+			graphHasData,
+			graphMismatch,
+			buildDrillMetricMismatches("graph.target", baseline, final),
+		),
 	}
+}
+
+func buildDrillLayerComparisonStatus(
+	hasData bool,
+	mismatch bool,
+	mismatches []drillRunFieldMismatch,
+) drillRunLayerComparisonStatus {
+	status := resolveDrillLayerStatus(hasData, mismatch)
+	if status != drillComparisonStatusMismatch {
+		return drillRunLayerComparisonStatus{Status: status}
+	}
+	if len(mismatches) == 0 {
+		mismatches = []drillRunFieldMismatch{
+			{
+				MetricName:    "run.verdict",
+				ExpectedValue: "Success",
+				ActualValue:   "Failure",
+			},
+		}
+	}
+	return drillRunLayerComparisonStatus{
+		Status:     status,
+		Mismatches: mismatches,
+	}
+}
+
+func buildDrillVMMismatches(run *storage.DrillRun, mismatch bool) []drillRunFieldMismatch {
+	if !mismatch || run == nil {
+		return nil
+	}
+
+	mismatches := make([]drillRunFieldMismatch, 0, 2)
+	status := strings.TrimSpace(run.Status)
+	verdict := strings.TrimSpace(run.Verdict)
+
+	if !strings.EqualFold(status, drills.StatusCompleted) {
+		mismatches = append(mismatches, drillRunFieldMismatch{
+			MetricName:    "status",
+			ExpectedValue: drills.StatusCompleted,
+			ActualValue:   status,
+		})
+	}
+	if strings.Contains(strings.ToLower(verdict), "fail") || strings.Contains(strings.ToLower(verdict), "error") {
+		mismatches = append(mismatches, drillRunFieldMismatch{
+			MetricName:    "verdict",
+			ExpectedValue: "Success",
+			ActualValue:   verdict,
+		})
+	}
+	return mismatches
+}
+
+func buildDrillAPIMismatches(run *storage.DrillRun, mismatch bool) []drillRunFieldMismatch {
+	if !mismatch || run == nil {
+		return nil
+	}
+
+	mismatches := make([]drillRunFieldMismatch, 0, 2)
+	errorStepCount := countDrillTimelineErrors(run)
+	if errorStepCount > 0 {
+		mismatches = append(mismatches, drillRunFieldMismatch{
+			MetricName:    "timeline.errorSteps",
+			ExpectedValue: "0",
+			ActualValue:   strconv.Itoa(errorStepCount),
+		})
+	}
+
+	status := strings.TrimSpace(run.Status)
+	if !strings.EqualFold(status, drills.StatusCompleted) {
+		mismatches = append(mismatches, drillRunFieldMismatch{
+			MetricName:    "run.status",
+			ExpectedValue: drills.StatusCompleted,
+			ActualValue:   status,
+		})
+	}
+	return mismatches
+}
+
+func buildDrillMetricMismatches(prefix string, expected, actual *drillRunServiceMetricValues) []drillRunFieldMismatch {
+	if expected == nil || actual == nil {
+		return nil
+	}
+
+	mismatches := make([]drillRunFieldMismatch, 0, 5)
+	appendMismatch := func(metric string, expectedValue string, actualValue string) {
+		mismatches = append(mismatches, drillRunFieldMismatch{
+			MetricName:    metric,
+			ExpectedValue: expectedValue,
+			ActualValue:   actualValue,
+		})
+	}
+
+	if expected.RPS != actual.RPS {
+		appendMismatch(prefix+".rps", formatDrillFloatValue(expected.RPS), formatDrillFloatValue(actual.RPS))
+	}
+	if expected.ErrorRate != actual.ErrorRate {
+		appendMismatch(prefix+".errorRate", formatDrillFloatValue(expected.ErrorRate), formatDrillFloatValue(actual.ErrorRate))
+	}
+	if expected.P95 != actual.P95 {
+		appendMismatch(prefix+".p95", formatDrillFloatValue(expected.P95), formatDrillFloatValue(actual.P95))
+	}
+	if expected.Availability != actual.Availability {
+		appendMismatch(prefix+".availability", formatDrillFloatValue(expected.Availability), formatDrillFloatValue(actual.Availability))
+	}
+	if expected.PodCount != actual.PodCount {
+		appendMismatch(prefix+".podCount", strconv.Itoa(expected.PodCount), strconv.Itoa(actual.PodCount))
+	}
+
+	return mismatches
+}
+
+func formatDrillFloatValue(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
 }
 
 func resolveDrillLayerStatus(hasData bool, mismatch bool) string {
@@ -605,4 +730,18 @@ func drillRunTimelineHasError(run *storage.DrillRun) bool {
 		}
 	}
 	return false
+}
+
+func countDrillTimelineErrors(run *storage.DrillRun) int {
+	if run == nil {
+		return 0
+	}
+
+	errorCount := 0
+	for _, step := range run.Timeline {
+		if strings.EqualFold(strings.TrimSpace(step.Status), "error") {
+			errorCount++
+		}
+	}
+	return errorCount
 }

@@ -89,6 +89,10 @@ func (s *DecisionStore) initSchema() error {
 		pre_snapshot TEXT,
 		post_snapshot TEXT,
 		verdict TEXT,
+		scenario_id TEXT,
+		validation_status TEXT,
+		rollback_verified_at TEXT,
+		banner_verified INTEGER,
 		created_at TEXT DEFAULT CURRENT_TIMESTAMP
 	);
 

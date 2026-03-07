@@ -152,7 +152,7 @@ func (c *TelemetryClient) initInfluxClient(token string) {
 	c.writeAPI = writeAPI
 	c.mu.Unlock()
 
-	fmt.Printf("[Telemetry] InfluxDB client initialized with token."+token)
+	fmt.Println("[Telemetry] InfluxDB client initialized with token.")
 }
 
 // waitForToken polls the token file until the token is available.
@@ -217,7 +217,7 @@ func (c *TelemetryClient) queryInfluxQL(ctx context.Context, q string) (*influxQ
 	token := c.resolveToken()
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
-		fmt.Printf("[TOKEN] InfluxDB Token:"+token)
+		fmt.Println("[TOKEN] InfluxDB token available")
 	}else {
 		fmt.Printf("[TOKEN] InfluxDB Token Missing\n")
 	}

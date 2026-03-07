@@ -1,11 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 
+	"predictive-analysis-engine/pkg/clients/graph"
 	"predictive-analysis-engine/pkg/drills"
 	"predictive-analysis-engine/pkg/storage"
 
@@ -24,6 +26,7 @@ func (h *DrillsHandler) RegisterRoutes(r chi.Router) {
 		r.Post("/plan", h.PlanDrill)
 		r.Post("/run", h.RunDrill)
 		r.Get("/runs/{id}", h.GetDrillRun)
+		r.Get("/runs/{id}/snapshot", h.GetDrillRunSnapshot)
 		r.Post("/runs/{id}/abort", h.AbortDrillRun)
 		r.Post("/runs/{id}/recover", h.RecoverDrillRun)
 		r.Post("/runs/{id}/accept", h.AcceptDrillRun)
@@ -101,6 +104,52 @@ type drillRunResponse struct {
 	RecoverySource   string  `json:"recoverySource,omitempty"`
 }
 
+type drillRunSnapshotResponse struct {
+	RunID            string                         `json:"runId"`
+	VMState          drillRunVMSnapshot             `json:"vmState"`
+	BackendMetrics   drillRunBackendMetricsSnapshot `json:"backendMetrics"`
+	DashboardMetrics drillRunDashboardSnapshot      `json:"dashboardMetrics"`
+	GraphSummary     drillRunGraphSummarySnapshot   `json:"graphSummary"`
+}
+
+type drillRunVMSnapshot struct {
+	Status           string  `json:"status"`
+	Verdict          string  `json:"verdict"`
+	Target           string  `json:"target"`
+	CanRecover       bool    `json:"canRecover"`
+	RecoveryDeadline *string `json:"recoveryDeadline,omitempty"`
+	RecoveryMode     string  `json:"recoveryMode,omitempty"`
+	RecoverySource   string  `json:"recoverySource,omitempty"`
+}
+
+type drillRunBackendMetricsSnapshot struct {
+	TargetService string                       `json:"targetService"`
+	Baseline      *drillRunServiceMetricValues `json:"baseline,omitempty"`
+	Final         *drillRunServiceMetricValues `json:"final,omitempty"`
+}
+
+type drillRunDashboardSnapshot struct {
+	Source   string                       `json:"source"`
+	Baseline *drillRunServiceMetricValues `json:"baseline,omitempty"`
+	Final    *drillRunServiceMetricValues `json:"final,omitempty"`
+}
+
+type drillRunGraphSummarySnapshot struct {
+	ServiceCount int                          `json:"serviceCount"`
+	EdgeCount    int                          `json:"edgeCount"`
+	Target       *drillRunServiceMetricValues `json:"target,omitempty"`
+}
+
+type drillRunServiceMetricValues struct {
+	Service      string  `json:"service"`
+	Namespace    string  `json:"namespace,omitempty"`
+	RPS          float64 `json:"rps"`
+	ErrorRate    float64 `json:"errorRate"`
+	P95          float64 `json:"p95"`
+	Availability float64 `json:"availability"`
+	PodCount     int     `json:"podCount"`
+}
+
 func (h *DrillsHandler) GetDrillRun(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -129,6 +178,72 @@ func (h *DrillsHandler) GetDrillRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if resp.RecoverySource == "" {
 		resp.RecoverySource = inferRecoverySource(run)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *DrillsHandler) GetDrillRunSnapshot(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "Missing drill run id", http.StatusBadRequest)
+		return
+	}
+
+	run, err := h.Store.GetDrillRun(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if run == nil {
+		http.Error(w, "Run not found", http.StatusNotFound)
+		return
+	}
+
+	targetService, targetNamespace := resolveDrillTarget(run)
+	preSnapshot := decodeDrillMetricsSnapshot(run.PreSnapshot)
+	postSnapshot := decodeDrillMetricsSnapshot(run.PostSnapshot)
+
+	baseline := extractDrillServiceMetrics(preSnapshot, targetService, targetNamespace)
+	final := extractDrillServiceMetrics(postSnapshot, targetService, targetNamespace)
+
+	vmState := drillRunVMSnapshot{
+		Status:  run.Status,
+		Verdict: run.Verdict,
+		Target:  run.Target,
+	}
+	if h.Engine != nil {
+		if runtime := h.Engine.RuntimeState(id); runtime != nil {
+			vmState.CanRecover = runtime.CanRecover
+			vmState.RecoveryDeadline = runtime.RecoveryDeadline
+			vmState.RecoveryMode = runtime.RecoveryMode
+			vmState.RecoverySource = runtime.RecoverySource
+		}
+	}
+	if vmState.RecoverySource == "" {
+		vmState.RecoverySource = inferRecoverySource(run)
+	}
+
+	graphSnapshot := postSnapshot
+	if graphSnapshot == nil {
+		graphSnapshot = preSnapshot
+	}
+
+	resp := drillRunSnapshotResponse{
+		RunID:   run.ID,
+		VMState: vmState,
+		BackendMetrics: drillRunBackendMetricsSnapshot{
+			TargetService: targetService,
+			Baseline:      baseline,
+			Final:         final,
+		},
+		DashboardMetrics: drillRunDashboardSnapshot{
+			Source:   "drill_run_snapshots",
+			Baseline: baseline,
+			Final:    final,
+		},
+		GraphSummary: buildDrillGraphSummary(graphSnapshot, targetService, targetNamespace),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -249,4 +364,110 @@ func inferRecoverySource(run *storage.DrillRun) string {
 		}
 	}
 	return ""
+}
+
+func resolveDrillTarget(run *storage.DrillRun) (service string, namespace string) {
+	if run == nil {
+		return "", ""
+	}
+
+	service = strings.TrimSpace(run.Target)
+	namespace = ""
+
+	type drillRunConfig struct {
+		Namespace string `json:"namespace"`
+	}
+	var cfg drillRunConfig
+	if len(bytes.TrimSpace(run.Config)) > 0 {
+		if err := json.Unmarshal(run.Config, &cfg); err == nil {
+			namespace = strings.TrimSpace(cfg.Namespace)
+		}
+	}
+
+	if strings.Contains(service, "/") {
+		parts := strings.SplitN(service, "/", 2)
+		if len(parts) == 2 {
+			if namespace == "" {
+				namespace = strings.TrimSpace(parts[0])
+			}
+			service = strings.TrimSpace(parts[1])
+		}
+	}
+
+	return service, namespace
+}
+
+func decodeDrillMetricsSnapshot(raw json.RawMessage) *graph.MetricsSnapshotResponse {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil
+	}
+
+	var snapshot graph.MetricsSnapshotResponse
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return nil
+	}
+	return &snapshot
+}
+
+func extractDrillServiceMetrics(snapshot *graph.MetricsSnapshotResponse, service, namespace string) *drillRunServiceMetricValues {
+	if snapshot == nil || strings.TrimSpace(service) == "" {
+		return nil
+	}
+
+	normalizedService := strings.TrimSpace(service)
+	normalizedNamespace := strings.TrimSpace(namespace)
+
+	for i := range snapshot.Services {
+		candidate := snapshot.Services[i]
+		if !strings.EqualFold(candidate.Name, normalizedService) {
+			continue
+		}
+		if normalizedNamespace != "" && !strings.EqualFold(candidate.Namespace, normalizedNamespace) {
+			continue
+		}
+
+		return &drillRunServiceMetricValues{
+			Service:      candidate.Name,
+			Namespace:    candidate.Namespace,
+			RPS:          candidate.RPS,
+			ErrorRate:    candidate.ErrorRate,
+			P95:          candidate.P95,
+			Availability: candidate.Availability.Value,
+			PodCount:     candidate.PodCount.Value,
+		}
+	}
+
+	if normalizedNamespace == "" {
+		return nil
+	}
+
+	for i := range snapshot.Services {
+		candidate := snapshot.Services[i]
+		if !strings.EqualFold(candidate.Name, normalizedService) {
+			continue
+		}
+		return &drillRunServiceMetricValues{
+			Service:      candidate.Name,
+			Namespace:    candidate.Namespace,
+			RPS:          candidate.RPS,
+			ErrorRate:    candidate.ErrorRate,
+			P95:          candidate.P95,
+			Availability: candidate.Availability.Value,
+			PodCount:     candidate.PodCount.Value,
+		}
+	}
+
+	return nil
+}
+
+func buildDrillGraphSummary(snapshot *graph.MetricsSnapshotResponse, service, namespace string) drillRunGraphSummarySnapshot {
+	if snapshot == nil {
+		return drillRunGraphSummarySnapshot{}
+	}
+
+	return drillRunGraphSummarySnapshot{
+		ServiceCount: len(snapshot.Services),
+		EdgeCount:    len(snapshot.Edges),
+		Target:       extractDrillServiceMetrics(snapshot, service, namespace),
+	}
 }

@@ -275,14 +275,20 @@ func (e *Engine) parseRunConfigAndTarget(run *storage.DrillRun) (RunConfig, stri
 
 	namespace := parsedConfig.Namespace
 	target := run.Target
-	if namespace == "" {
-		parts := strings.Split(run.Target, "/")
-		if len(parts) == 2 {
+
+	// Always strip namespace prefix from target if it contains a slash.
+	// The UI sends targets as "namespace/service" while also setting
+	// config.namespace, so the bare service name must be extracted
+	// regardless of whether namespace was provided in config.
+	if parts := strings.Split(target, "/"); len(parts) == 2 {
+		if namespace == "" {
 			namespace = parts[0]
-			target = parts[1]
-		} else {
-			namespace = "default"
 		}
+		target = parts[1]
+	}
+
+	if namespace == "" {
+		namespace = "default"
 	}
 
 	return parsedConfig, namespace, target, nil

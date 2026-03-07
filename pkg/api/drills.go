@@ -112,6 +112,7 @@ type drillRunSnapshotResponse struct {
 	BackendMetrics    drillRunBackendMetricsSnapshot `json:"backendMetrics"`
 	DashboardMetrics  drillRunDashboardSnapshot      `json:"dashboardMetrics"`
 	GraphSummary      drillRunGraphSummarySnapshot   `json:"graphSummary"`
+	Comparison        drillRunComparisonSnapshot      `json:"comparison"`
 }
 
 type drillRunVMSnapshot struct {
@@ -154,6 +155,23 @@ type drillRunServiceMetricValues struct {
 	P95          float64 `json:"p95"`
 	Availability float64 `json:"availability"`
 	PodCount     int     `json:"podCount"`
+}
+
+const (
+	drillComparisonStatusMatch    = "match"
+	drillComparisonStatusMismatch = "mismatch"
+	drillComparisonStatusMissing  = "missing"
+)
+
+type drillRunComparisonSnapshot struct {
+	VM        drillRunLayerComparisonStatus `json:"vm"`
+	API       drillRunLayerComparisonStatus `json:"api"`
+	UIMetrics drillRunLayerComparisonStatus `json:"uiMetrics"`
+	Graph     drillRunLayerComparisonStatus `json:"graph"`
+}
+
+type drillRunLayerComparisonStatus struct {
+	Status string `json:"status"`
 }
 
 func (h *DrillsHandler) GetDrillRun(w http.ResponseWriter, r *http.Request) {
@@ -258,6 +276,7 @@ func (h *DrillsHandler) GetDrillRunSnapshot(w http.ResponseWriter, r *http.Reque
 			Final:           final,
 		},
 		GraphSummary: buildDrillGraphSummary(graphSnapshot, targetService, targetNamespace, graphTimestamp),
+		Comparison:   buildDrillRunComparison(run, baseline, final, graphSnapshot),
 	}
 
 	w.Header().Set("Cache-Control", "no-store")
@@ -521,4 +540,69 @@ func chooseDrillSourceTimestamp(primary, fallback *string) *string {
 		return primary
 	}
 	return fallback
+}
+
+func buildDrillRunComparison(
+	run *storage.DrillRun,
+	baseline *drillRunServiceMetricValues,
+	final *drillRunServiceMetricValues,
+	graphSnapshot *graph.MetricsSnapshotResponse,
+) drillRunComparisonSnapshot {
+	runFailed := drillRunHasFailure(run)
+	apiHasError := drillRunTimelineHasError(run)
+
+	vmHasData := run != nil && strings.TrimSpace(run.Status) != ""
+	apiHasData := run != nil && len(run.Timeline) > 0
+	uiHasData := baseline != nil && final != nil
+	graphHasData := graphSnapshot != nil
+
+	return drillRunComparisonSnapshot{
+		VM: drillRunLayerComparisonStatus{
+			Status: resolveDrillLayerStatus(vmHasData, vmHasData && runFailed),
+		},
+		API: drillRunLayerComparisonStatus{
+			Status: resolveDrillLayerStatus(apiHasData, apiHasData && (runFailed || apiHasError)),
+		},
+		UIMetrics: drillRunLayerComparisonStatus{
+			Status: resolveDrillLayerStatus(uiHasData, uiHasData && runFailed),
+		},
+		Graph: drillRunLayerComparisonStatus{
+			Status: resolveDrillLayerStatus(graphHasData, graphHasData && runFailed),
+		},
+	}
+}
+
+func resolveDrillLayerStatus(hasData bool, mismatch bool) string {
+	if !hasData {
+		return drillComparisonStatusMissing
+	}
+	if mismatch {
+		return drillComparisonStatusMismatch
+	}
+	return drillComparisonStatusMatch
+}
+
+func drillRunHasFailure(run *storage.DrillRun) bool {
+	if run == nil {
+		return false
+	}
+
+	status := strings.ToLower(strings.TrimSpace(run.Status))
+	verdict := strings.ToLower(strings.TrimSpace(run.Verdict))
+	if status == strings.ToLower(drills.StatusFailed) || status == strings.ToLower(drills.StatusAborted) {
+		return true
+	}
+	return strings.Contains(verdict, "fail") || strings.Contains(verdict, "error")
+}
+
+func drillRunTimelineHasError(run *storage.DrillRun) bool {
+	if run == nil {
+		return false
+	}
+	for _, step := range run.Timeline {
+		if strings.EqualFold(strings.TrimSpace(step.Status), "error") {
+			return true
+		}
+	}
+	return false
 }

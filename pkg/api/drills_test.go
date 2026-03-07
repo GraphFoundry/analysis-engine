@@ -89,6 +89,15 @@ func TestGetDrillRunSnapshotReturnsCrossLayerFields(t *testing.T) {
 	if err := store.UpdateDrillRun(run); err != nil {
 		t.Fatalf("UpdateDrillRun() failed: %v", err)
 	}
+	if err := store.AddDrillStep(storage.DrillStep{
+		RunID:     "run-1",
+		Timestamp: "2026-03-07T10:01:00Z",
+		Phase:     "Observe",
+		Message:   "Scenario checks passed",
+		Status:    "Ok",
+	}); err != nil {
+		t.Fatalf("AddDrillStep() failed: %v", err)
+	}
 
 	req := drillRunRequestWithID(http.MethodGet, "/drills/runs/run-1/snapshot", "run-1")
 	rec := httptest.NewRecorder()
@@ -146,6 +155,18 @@ func TestGetDrillRunSnapshotReturnsCrossLayerFields(t *testing.T) {
 	if body.GraphSummary.Target == nil {
 		t.Fatalf("expected graph target metrics to be present")
 	}
+	if body.Comparison.VM.Status != "match" {
+		t.Fatalf("expected vm comparison status match, got %q", body.Comparison.VM.Status)
+	}
+	if body.Comparison.API.Status != "match" {
+		t.Fatalf("expected api comparison status match, got %q", body.Comparison.API.Status)
+	}
+	if body.Comparison.UIMetrics.Status != "match" {
+		t.Fatalf("expected ui metrics comparison status match, got %q", body.Comparison.UIMetrics.Status)
+	}
+	if body.Comparison.Graph.Status != "match" {
+		t.Fatalf("expected graph comparison status match, got %q", body.Comparison.Graph.Status)
+	}
 }
 
 func TestGetDrillRunSnapshotReturnsNotFoundForUnknownRun(t *testing.T) {
@@ -161,6 +182,62 @@ func TestGetDrillRunSnapshotReturnsNotFoundForUnknownRun(t *testing.T) {
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected status %d, got %d", http.StatusNotFound, res.StatusCode)
+	}
+}
+
+func TestGetDrillRunSnapshotComparisonIncludesMismatchAndMissingStatuses(t *testing.T) {
+	store := newTestDecisionStore(t)
+	handler := &DrillsHandler{Store: store}
+
+	run := storage.DrillRun{
+		ID:        "run-failed",
+		Type:      "ServiceBrownout",
+		Target:    "checkoutservice",
+		Status:    "Failed",
+		StartTime: "2026-03-07T10:00:00Z",
+		Config:    json.RawMessage(`{"namespace":"default"}`),
+		Verdict:   "Failure",
+	}
+	if err := store.InsertDrillRun(run); err != nil {
+		t.Fatalf("InsertDrillRun() failed: %v", err)
+	}
+	if err := store.AddDrillStep(storage.DrillStep{
+		RunID:     "run-failed",
+		Timestamp: "2026-03-07T10:00:30Z",
+		Phase:     "Execute",
+		Message:   "Action failed",
+		Status:    "Error",
+	}); err != nil {
+		t.Fatalf("AddDrillStep() failed: %v", err)
+	}
+
+	req := drillRunRequestWithID(http.MethodGet, "/drills/runs/run-failed/snapshot", "run-failed")
+	rec := httptest.NewRecorder()
+
+	handler.GetDrillRunSnapshot(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, res.StatusCode)
+	}
+
+	var body drillRunSnapshotResponse
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("expected valid json response: %v", err)
+	}
+
+	if body.Comparison.VM.Status != "mismatch" {
+		t.Fatalf("expected vm comparison mismatch for failed run, got %q", body.Comparison.VM.Status)
+	}
+	if body.Comparison.API.Status != "mismatch" {
+		t.Fatalf("expected api comparison mismatch for failed run, got %q", body.Comparison.API.Status)
+	}
+	if body.Comparison.UIMetrics.Status != "missing" {
+		t.Fatalf("expected ui metrics comparison missing without snapshots, got %q", body.Comparison.UIMetrics.Status)
+	}
+	if body.Comparison.Graph.Status != "missing" {
+		t.Fatalf("expected graph comparison missing without snapshots, got %q", body.Comparison.Graph.Status)
 	}
 }
 

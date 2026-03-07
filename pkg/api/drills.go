@@ -37,9 +37,10 @@ func (h *DrillsHandler) RegisterRoutes(r chi.Router) {
 }
 
 type DrillPlanRequest struct {
-	Type   string          `json:"type"`
-	Target string          `json:"target"`
-	Config json.RawMessage `json:"config"`
+	Type           string          `json:"type"`
+	Target         string          `json:"target"`
+	Config         json.RawMessage `json:"config"`
+	BannerVerified *bool           `json:"bannerVerified,omitempty"`
 }
 
 type drillScenarioCatalogResponse struct {
@@ -68,6 +69,14 @@ func (h *DrillsHandler) PlanDrill(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if req.BannerVerified != nil {
+		bannerVerified := *req.BannerVerified
+		run.BannerVerified = &bannerVerified
+		if err := h.Store.UpdateDrillRun(*run); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -573,19 +582,21 @@ func buildDrillRunComparison(
 	graphSnapshot *graph.MetricsSnapshotResponse,
 ) drillRunComparisonSnapshot {
 	runFailed := drillRunHasFailure(run)
+	validScenario := drillRunIsValidScenario(run)
 	apiHasError := drillRunTimelineHasError(run)
+	bannerMismatch := validScenario && !drillRunBannerVerified(run)
 
 	vmHasData := run != nil && strings.TrimSpace(run.Status) != ""
 	apiHasData := run != nil && len(run.Timeline) > 0
 	uiHasData := baseline != nil && final != nil
 	graphHasData := graphSnapshot != nil
 	vmMismatch := vmHasData && runFailed
-	apiMismatch := apiHasData && (runFailed || apiHasError)
+	apiMismatch := apiHasData && (runFailed || apiHasError || bannerMismatch)
 	uiMismatch := uiHasData && runFailed
 	graphMismatch := graphHasData && runFailed
 
 	vm := buildDrillLayerComparisonStatus(vmHasData, vmMismatch, buildDrillVMMismatches(run, vmMismatch))
-	api := buildDrillLayerComparisonStatus(apiHasData, apiMismatch, buildDrillAPIMismatches(run, apiMismatch))
+	api := buildDrillLayerComparisonStatus(apiHasData, apiMismatch, buildDrillAPIMismatches(run, apiMismatch, bannerMismatch))
 	uiMetrics := buildDrillLayerComparisonStatus(
 		uiHasData,
 		uiMismatch,
@@ -694,12 +705,12 @@ func buildDrillVMMismatches(run *storage.DrillRun, mismatch bool) []drillRunFiel
 	return mismatches
 }
 
-func buildDrillAPIMismatches(run *storage.DrillRun, mismatch bool) []drillRunFieldMismatch {
+func buildDrillAPIMismatches(run *storage.DrillRun, mismatch bool, bannerMismatch bool) []drillRunFieldMismatch {
 	if !mismatch || run == nil {
 		return nil
 	}
 
-	mismatches := make([]drillRunFieldMismatch, 0, 2)
+	mismatches := make([]drillRunFieldMismatch, 0, 3)
 	errorStepCount := countDrillTimelineErrors(run)
 	if errorStepCount > 0 {
 		mismatches = append(mismatches, drillRunFieldMismatch{
@@ -715,6 +726,13 @@ func buildDrillAPIMismatches(run *storage.DrillRun, mismatch bool) []drillRunFie
 			MetricName:    "run.status",
 			ExpectedValue: drills.StatusCompleted,
 			ActualValue:   status,
+		})
+	}
+	if bannerMismatch {
+		mismatches = append(mismatches, drillRunFieldMismatch{
+			MetricName:    "run.bannerVerified",
+			ExpectedValue: "true",
+			ActualValue:   formatDrillBannerVerifiedValue(run),
 		})
 	}
 	return mismatches
@@ -778,6 +796,35 @@ func drillRunHasFailure(run *storage.DrillRun) bool {
 		return true
 	}
 	return strings.Contains(verdict, "fail") || strings.Contains(verdict, "error")
+}
+
+func drillRunIsValidScenario(run *storage.DrillRun) bool {
+	if run == nil {
+		return false
+	}
+
+	if !strings.EqualFold(strings.TrimSpace(run.Status), drills.StatusCompleted) {
+		return false
+	}
+
+	return !drillRunHasFailure(run)
+}
+
+func drillRunBannerVerified(run *storage.DrillRun) bool {
+	if run == nil || run.BannerVerified == nil {
+		return false
+	}
+	return *run.BannerVerified
+}
+
+func formatDrillBannerVerifiedValue(run *storage.DrillRun) string {
+	if run == nil || run.BannerVerified == nil {
+		return "missing"
+	}
+	if *run.BannerVerified {
+		return "true"
+	}
+	return "false"
 }
 
 func drillRunTimelineHasError(run *storage.DrillRun) bool {

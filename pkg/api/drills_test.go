@@ -96,18 +96,65 @@ func TestRunDrillReturnsConflictWhenRollbackVerificationIsMissing(t *testing.T) 
 	}
 }
 
+func TestPlanDrillPersistsBannerVerificationMetadata(t *testing.T) {
+	store := newTestDecisionStore(t)
+	engine := drills.NewEngine(store, nil, nil)
+	handler := &DrillsHandler{Engine: engine, Store: store}
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/drills/plan",
+		strings.NewReader(`{
+			"type":"ServiceBrownout",
+			"target":"default/checkoutservice",
+			"config":{"namespace":"default","observeTokens":15},
+			"bannerVerified":true
+		}`),
+	)
+	rec := httptest.NewRecorder()
+
+	handler.PlanDrill(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, res.StatusCode)
+	}
+
+	var body storage.DrillRun
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("expected valid json response: %v", err)
+	}
+	if body.BannerVerified == nil || !*body.BannerVerified {
+		t.Fatalf("expected response bannerVerified=true, got %v", body.BannerVerified)
+	}
+
+	persisted, err := store.GetDrillRun(body.ID)
+	if err != nil {
+		t.Fatalf("GetDrillRun() failed: %v", err)
+	}
+	if persisted == nil {
+		t.Fatalf("expected persisted run %q to exist", body.ID)
+	}
+	if persisted.BannerVerified == nil || !*persisted.BannerVerified {
+		t.Fatalf("expected persisted bannerVerified=true, got %v", persisted.BannerVerified)
+	}
+}
+
 func TestGetDrillRunSnapshotReturnsCrossLayerFields(t *testing.T) {
 	store := newTestDecisionStore(t)
 	handler := &DrillsHandler{Store: store}
+	bannerVerified := true
 
 	run := storage.DrillRun{
-		ID:        "run-1",
-		Type:      "ServiceBrownout",
-		Target:    "checkoutservice",
-		Status:    "Completed",
-		StartTime: "2026-03-07T10:00:00Z",
-		Config:    json.RawMessage(`{"namespace":"default","observeTokens":15}`),
-		Verdict:   "Success",
+		ID:             "run-1",
+		Type:           "ServiceBrownout",
+		Target:         "checkoutservice",
+		Status:         "Completed",
+		StartTime:      "2026-03-07T10:00:00Z",
+		Config:         json.RawMessage(`{"namespace":"default","observeTokens":15}`),
+		Verdict:        "Success",
+		BannerVerified: &bannerVerified,
 	}
 	if err := store.InsertDrillRun(run); err != nil {
 		t.Fatalf("InsertDrillRun() failed: %v", err)
@@ -221,6 +268,104 @@ func TestGetDrillRunSnapshotReturnsCrossLayerFields(t *testing.T) {
 	}
 	if body.Comparison.FailureReason != "" {
 		t.Fatalf("expected empty failure reason for passed scenario, got %q", body.Comparison.FailureReason)
+	}
+}
+
+func TestGetDrillRunSnapshotMarksMissingBannerAsMismatchForValidScenario(t *testing.T) {
+	store := newTestDecisionStore(t)
+	handler := &DrillsHandler{Store: store}
+	bannerVerified := false
+
+	run := storage.DrillRun{
+		ID:             "run-banner-mismatch",
+		Type:           "ServiceBrownout",
+		Target:         "checkoutservice",
+		Status:         "Completed",
+		StartTime:      "2026-03-07T11:00:00Z",
+		Config:         json.RawMessage(`{"namespace":"default","observeTokens":15}`),
+		Verdict:        "Success",
+		BannerVerified: &bannerVerified,
+	}
+	if err := store.InsertDrillRun(run); err != nil {
+		t.Fatalf("InsertDrillRun() failed: %v", err)
+	}
+
+	run.PreSnapshot = json.RawMessage(`{
+		"timestamp":"2026-03-07T11:00:30Z",
+		"window":"5m",
+		"services":[
+			{"name":"checkoutservice","namespace":"default","rps":20.0,"errorRate":0.01,"p95":160,"podCount":2,"availability":0.99}
+		],
+		"edges":[
+			{"from":"frontend","to":"checkoutservice","namespace":"default","rps":20.0,"errorRate":0.01,"p95":160}
+		]
+	}`)
+	run.PostSnapshot = json.RawMessage(`{
+		"timestamp":"2026-03-07T11:03:00Z",
+		"window":"5m",
+		"services":[
+			{"name":"checkoutservice","namespace":"default","rps":20.0,"errorRate":0.01,"p95":160,"podCount":2,"availability":0.99},
+			{"name":"frontend","namespace":"default","rps":34.0,"errorRate":0.00,"p95":120,"podCount":3,"availability":1.00}
+		],
+		"edges":[
+			{"from":"frontend","to":"checkoutservice","namespace":"default","rps":20.0,"errorRate":0.01,"p95":160}
+		]
+	}`)
+	if err := store.UpdateDrillRun(run); err != nil {
+		t.Fatalf("UpdateDrillRun() failed: %v", err)
+	}
+	if err := store.AddDrillStep(storage.DrillStep{
+		RunID:     run.ID,
+		Timestamp: "2026-03-07T11:01:00Z",
+		Phase:     "Observe",
+		Message:   "Scenario checks passed",
+		Status:    "Ok",
+	}); err != nil {
+		t.Fatalf("AddDrillStep() failed: %v", err)
+	}
+
+	req := drillRunRequestWithID(http.MethodGet, "/drills/runs/run-banner-mismatch/snapshot", run.ID)
+	rec := httptest.NewRecorder()
+
+	handler.GetDrillRunSnapshot(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, res.StatusCode)
+	}
+
+	var body drillRunSnapshotResponse
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("expected valid json response: %v", err)
+	}
+
+	if body.Comparison.VM.Status != "match" {
+		t.Fatalf("expected vm comparison status match, got %q", body.Comparison.VM.Status)
+	}
+	if body.Comparison.API.Status != "mismatch" {
+		t.Fatalf("expected api comparison status mismatch, got %q", body.Comparison.API.Status)
+	}
+	if body.Comparison.UIMetrics.Status != "match" {
+		t.Fatalf("expected ui metrics comparison status match, got %q", body.Comparison.UIMetrics.Status)
+	}
+	if body.Comparison.Graph.Status != "match" {
+		t.Fatalf("expected graph comparison status match, got %q", body.Comparison.Graph.Status)
+	}
+
+	bannerMismatch, ok := findDrillMismatch(body.Comparison.API.Mismatches, "run.bannerVerified")
+	if !ok {
+		t.Fatalf("expected api mismatch for run.bannerVerified, got %+v", body.Comparison.API.Mismatches)
+	}
+	if bannerMismatch.ExpectedValue != "true" || bannerMismatch.ActualValue != "false" {
+		t.Fatalf("expected run.bannerVerified mismatch true->false, got %+v", bannerMismatch)
+	}
+	if body.Comparison.ScenarioVerdict != "failed" {
+		t.Fatalf("expected scenario verdict failed, got %q", body.Comparison.ScenarioVerdict)
+	}
+	expectedReason := "api mismatch on run.bannerVerified (expected true, actual false)"
+	if body.Comparison.FailureReason != expectedReason {
+		t.Fatalf("expected failure reason %q, got %q", expectedReason, body.Comparison.FailureReason)
 	}
 }
 

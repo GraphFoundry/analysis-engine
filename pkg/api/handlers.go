@@ -165,10 +165,17 @@ func (h *Handler) ServicesHandler(w http.ResponseWriter, r *http.Request) {
 
 	var services []ServiceItem
 	for _, s := range sRes.data {
+		ns := s.Namespace
+		if ns == "" {
+			ns = "default"
+		}
+		if ns != "default" {
+			continue
+		}
 		services = append(services, ServiceItem{
-			ServiceId:    fmt.Sprintf("%s:%s", s.Namespace, s.Name),
+			ServiceId:    fmt.Sprintf("%s:%s", ns, s.Name),
 			Name:         s.Name,
-			Namespace:    s.Namespace,
+			Namespace:    ns,
 			PodCount:     s.PodCount,
 			Availability: s.Availability,
 			Placement:    s.Placement,

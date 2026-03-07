@@ -68,6 +68,9 @@ type SnapshotMetadata struct {
 func (h *Handler) DependencyGraphHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	namespace := r.URL.Query().Get("namespace")
+	if namespace == "" {
+		namespace = "default"
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(3)

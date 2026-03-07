@@ -8,7 +8,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=1 GOOS=linux \
+RUN CGO_ENABLED=0 GOOS=linux \
     go build -ldflags="-s -w" \
     -o analysis-engine ./cmd/analysis-engine
 
@@ -18,10 +18,10 @@ FROM gcr.io/distroless/base-debian12
 
 WORKDIR /app
 
-COPY --from=builder /app/app .
+COPY --from=builder /app/analysis-engine /app/analysis-engine
 
 EXPOSE 5000
 
 USER nonroot:nonroot
 
-CMD ["./analysis-engine"]
+CMD ["/app/analysis-engine"]

@@ -92,6 +92,7 @@ func (s *DecisionStore) initSchema() error {
 		scenario_id TEXT,
 		validation_status TEXT,
 		rollback_verified_at TEXT,
+		rollback_verification_source TEXT,
 		banner_verified INTEGER,
 		created_at TEXT DEFAULT CURRENT_TIMESTAMP
 	);
@@ -135,6 +136,7 @@ func (s *DecisionStore) migrateDrillRunValidationColumns() error {
 		{name: "scenario_id", definition: "TEXT"},
 		{name: "validation_status", definition: "TEXT"},
 		{name: "rollback_verified_at", definition: "TEXT"},
+		{name: "rollback_verification_source", definition: "TEXT"},
 		{name: "banner_verified", definition: "INTEGER"},
 	}
 

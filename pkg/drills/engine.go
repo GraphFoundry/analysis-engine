@@ -34,6 +34,7 @@ const (
 var (
 	ErrDrillNotActive      = errors.New("drill is not actively running")
 	ErrDrillNotRecoverable = errors.New("drill is not awaiting recovery")
+	ErrRollbackGateBlocked = errors.New("rollback verification is required before starting the next scenario")
 )
 
 type recoveryTrigger struct {
@@ -217,6 +218,10 @@ func (e *Engine) ExecuteDrill(runID string) error {
 		return fmt.Errorf("run not found or error: %w", err)
 	}
 
+	if err := e.enforceRollbackTransitionGate(runID); err != nil {
+		return err
+	}
+
 	if err := e.preflightExecuteDrill(run); err != nil {
 		e.failRun(run, "Validate", err.Error())
 		return err
@@ -229,6 +234,47 @@ func (e *Engine) ExecuteDrill(runID string) error {
 	go e.runStateMachine(ctx, run, session)
 
 	return nil
+}
+
+func (e *Engine) enforceRollbackTransitionGate(nextRunID string) error {
+	if e.store == nil {
+		return nil
+	}
+
+	runs, err := e.store.ListDrillRuns(200)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate rollback transition gate: %w", err)
+	}
+
+	previous := latestStartedRun(runs, nextRunID)
+	if previous == nil {
+		return nil
+	}
+	if rollbackVerificationRecorded(previous.RollbackVerifiedAt) {
+		return nil
+	}
+
+	return fmt.Errorf("%w: previous run %s is %s", ErrRollbackGateBlocked, previous.ID, previous.Status)
+}
+
+func latestStartedRun(runs []storage.DrillRun, nextRunID string) *storage.DrillRun {
+	for i := range runs {
+		if runs[i].ID == nextRunID {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(runs[i].Status), StatusPlanned) {
+			continue
+		}
+		return &runs[i]
+	}
+	return nil
+}
+
+func rollbackVerificationRecorded(rollbackVerifiedAt *string) bool {
+	if rollbackVerifiedAt == nil {
+		return false
+	}
+	return strings.TrimSpace(*rollbackVerifiedAt) != ""
 }
 
 func (e *Engine) preflightExecuteDrill(run *storage.DrillRun) error {
@@ -358,6 +404,9 @@ func (e *Engine) runStateMachine(ctx context.Context, run *storage.DrillRun, ses
 			run.Verdict = "Accepted"
 		}
 	}
+	if err := e.recordRollbackVerification(run, recovery.Source); err != nil {
+		e.logStep(run.ID, "Recovery", fmt.Sprintf("Warning: Failed to record rollback verification metadata: %v", err), "Warn")
+	}
 
 	// 4. Recovery
 	if recovery.SkipRollback {
@@ -416,6 +465,26 @@ func (e *Engine) awaitRecoveryAuthorization(ctx context.Context, run *storage.Dr
 	case <-ctx.Done():
 		return recoveryTrigger{Source: "abort", MarkAborted: true}
 	}
+}
+
+func (e *Engine) recordRollbackVerification(run *storage.DrillRun, source string) error {
+	if e.store == nil || run == nil {
+		return nil
+	}
+
+	verifiedAt := time.Now().UTC().Format(time.RFC3339)
+	run.RollbackVerifiedAt = &verifiedAt
+
+	trimmedSource := strings.TrimSpace(source)
+	if trimmedSource == "" {
+		trimmedSource = "system"
+	}
+	run.RollbackVerificationSource = trimmedSource
+
+	if err := e.store.UpdateDrillRun(*run); err != nil {
+		return fmt.Errorf("failed to persist rollback verification metadata: %w", err)
+	}
+	return nil
 }
 
 func (e *Engine) recoveryInitiationMessage(trigger recoveryTrigger) string {

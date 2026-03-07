@@ -25,6 +25,7 @@ func TestNewDecisionStore_MigratesDrillRunValidationColumns(t *testing.T) {
 		"scenario_id",
 		"validation_status",
 		"rollback_verified_at",
+		"rollback_verification_source",
 		"banner_verified",
 	}
 	for _, column := range expected {
@@ -60,6 +61,9 @@ func TestNewDecisionStore_ExistingDrillRunsRemainReadableAfterMigration(t *testi
 	if run.RollbackVerifiedAt != nil || run.BannerVerified != nil {
 		t.Fatalf("expected nullable migrated metadata to remain nil, got rollbackVerifiedAt=%v bannerVerified=%v", run.RollbackVerifiedAt, run.BannerVerified)
 	}
+	if run.RollbackVerificationSource != "" {
+		t.Fatalf("expected migrated rollbackVerificationSource to be empty, got %q", run.RollbackVerificationSource)
+	}
 	if string(run.Config) != `{"mode":"legacy"}` {
 		t.Fatalf("expected legacy config to remain readable, got %s", string(run.Config))
 	}
@@ -79,6 +83,9 @@ func TestNewDecisionStore_ExistingDrillRunsRemainReadableAfterMigration(t *testi
 	}
 	if runs[0].RollbackVerifiedAt != nil || runs[0].BannerVerified != nil {
 		t.Fatalf("expected nil nullable metadata in listed legacy run, got rollbackVerifiedAt=%v bannerVerified=%v", runs[0].RollbackVerifiedAt, runs[0].BannerVerified)
+	}
+	if runs[0].RollbackVerificationSource != "" {
+		t.Fatalf("expected empty rollbackVerificationSource in listed legacy run, got %q", runs[0].RollbackVerificationSource)
 	}
 }
 

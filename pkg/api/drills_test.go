@@ -430,6 +430,22 @@ func findDrillMismatch(mismatches []drillRunFieldMismatch, metricName string) (d
 	return drillRunFieldMismatch{}, false
 }
 
+func TestInferRecoverySourcePrefersPersistedRollbackVerificationSource(t *testing.T) {
+	run := &storage.DrillRun{
+		RollbackVerificationSource: "manual",
+		Timeline: []storage.DrillStep{
+			{
+				Phase:   "Recovery",
+				Message: "Failsafe timeout reached; initiating rollback (source: failsafe)",
+			},
+		},
+	}
+
+	if source := inferRecoverySource(run); source != "manual" {
+		t.Fatalf("expected persisted source manual, got %q", source)
+	}
+}
+
 func newTestDecisionStore(t *testing.T) *storage.DecisionStore {
 	t.Helper()
 

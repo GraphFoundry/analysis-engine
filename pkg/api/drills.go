@@ -392,7 +392,15 @@ func (h *DrillsHandler) ListHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func inferRecoverySource(run *storage.DrillRun) string {
-	if run == nil || len(run.Timeline) == 0 {
+	if run == nil {
+		return ""
+	}
+
+	if source := strings.TrimSpace(run.RollbackVerificationSource); source != "" {
+		return source
+	}
+
+	if len(run.Timeline) == 0 {
 		return ""
 	}
 
@@ -409,6 +417,8 @@ func inferRecoverySource(run *storage.DrillRun) string {
 			return "failsafe"
 		case strings.Contains(msg, "source: abort"):
 			return "abort"
+		case strings.Contains(msg, "source: accept"):
+			return "accept"
 		}
 	}
 	return ""

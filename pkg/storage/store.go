@@ -113,7 +113,75 @@ func (s *DecisionStore) initSchema() error {
 	if err != nil {
 		return fmt.Errorf("failed to init schema: %w", err)
 	}
+
+	if err := s.migrateDrillRunValidationColumns(); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *DecisionStore) migrateDrillRunValidationColumns() error {
+	columns, err := s.getTableColumnSet("drill_runs")
+	if err != nil {
+		return fmt.Errorf("failed to inspect drill_runs columns for migration: %w", err)
+	}
+
+	type columnMigration struct {
+		name       string
+		definition string
+	}
+
+	migrations := []columnMigration{
+		{name: "scenario_id", definition: "TEXT"},
+		{name: "validation_status", definition: "TEXT"},
+		{name: "rollback_verified_at", definition: "TEXT"},
+		{name: "banner_verified", definition: "INTEGER"},
+	}
+
+	for _, migration := range migrations {
+		if _, exists := columns[migration.name]; exists {
+			continue
+		}
+
+		statement := fmt.Sprintf(
+			"ALTER TABLE drill_runs ADD COLUMN %s %s",
+			migration.name,
+			migration.definition,
+		)
+		if _, err := s.db.Exec(statement); err != nil {
+			return fmt.Errorf("failed to apply migration for drill_runs.%s: %w", migration.name, err)
+		}
+	}
+
+	return nil
+}
+
+func (s *DecisionStore) getTableColumnSet(tableName string) (map[string]struct{}, error) {
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableName))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	columns := make(map[string]struct{})
+	for rows.Next() {
+		var cid int
+		var name string
+		var colType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &pk); err != nil {
+			return nil, err
+		}
+		columns[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return columns, nil
 }
 
 // Close closes the underlying SQLite connection.

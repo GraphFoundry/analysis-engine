@@ -167,6 +167,12 @@ func TestGetDrillRunSnapshotReturnsCrossLayerFields(t *testing.T) {
 	if body.Comparison.Graph.Status != "match" {
 		t.Fatalf("expected graph comparison status match, got %q", body.Comparison.Graph.Status)
 	}
+	if body.Comparison.ScenarioVerdict != "passed" {
+		t.Fatalf("expected scenario verdict passed, got %q", body.Comparison.ScenarioVerdict)
+	}
+	if body.Comparison.FailureReason != "" {
+		t.Fatalf("expected empty failure reason for passed scenario, got %q", body.Comparison.FailureReason)
+	}
 }
 
 func TestGetDrillRunSnapshotReturnsNotFoundForUnknownRun(t *testing.T) {
@@ -238,6 +244,13 @@ func TestGetDrillRunSnapshotComparisonIncludesMismatchAndMissingStatuses(t *test
 	}
 	if body.Comparison.Graph.Status != "missing" {
 		t.Fatalf("expected graph comparison missing without snapshots, got %q", body.Comparison.Graph.Status)
+	}
+	if body.Comparison.ScenarioVerdict != "failed" {
+		t.Fatalf("expected scenario verdict failed, got %q", body.Comparison.ScenarioVerdict)
+	}
+	expectedReason := "vm mismatch on status (expected Completed, actual Failed)"
+	if body.Comparison.FailureReason != expectedReason {
+		t.Fatalf("expected failure reason %q, got %q", expectedReason, body.Comparison.FailureReason)
 	}
 }
 
@@ -349,6 +362,13 @@ func TestGetDrillRunSnapshotComparisonIncludesFieldLevelMismatches(t *testing.T)
 	}
 	if graphPods.ExpectedValue != "2" || graphPods.ActualValue != "1" {
 		t.Fatalf("expected graph podCount mismatch 2->1, got %+v", graphPods)
+	}
+	if body.Comparison.ScenarioVerdict != "failed" {
+		t.Fatalf("expected scenario verdict failed, got %q", body.Comparison.ScenarioVerdict)
+	}
+	expectedReason := "vm mismatch on status (expected Completed, actual Failed)"
+	if body.Comparison.FailureReason != expectedReason {
+		t.Fatalf("expected failure reason %q, got %q", expectedReason, body.Comparison.FailureReason)
 	}
 }
 

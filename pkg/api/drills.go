@@ -113,7 +113,7 @@ type drillRunSnapshotResponse struct {
 	BackendMetrics    drillRunBackendMetricsSnapshot `json:"backendMetrics"`
 	DashboardMetrics  drillRunDashboardSnapshot      `json:"dashboardMetrics"`
 	GraphSummary      drillRunGraphSummarySnapshot   `json:"graphSummary"`
-	Comparison        drillRunComparisonSnapshot      `json:"comparison"`
+	Comparison        drillRunComparisonSnapshot     `json:"comparison"`
 }
 
 type drillRunVMSnapshot struct {
@@ -162,13 +162,17 @@ const (
 	drillComparisonStatusMatch    = "match"
 	drillComparisonStatusMismatch = "mismatch"
 	drillComparisonStatusMissing  = "missing"
+	drillScenarioVerdictPassed    = "passed"
+	drillScenarioVerdictFailed    = "failed"
 )
 
 type drillRunComparisonSnapshot struct {
-	VM        drillRunLayerComparisonStatus `json:"vm"`
-	API       drillRunLayerComparisonStatus `json:"api"`
-	UIMetrics drillRunLayerComparisonStatus `json:"uiMetrics"`
-	Graph     drillRunLayerComparisonStatus `json:"graph"`
+	VM              drillRunLayerComparisonStatus `json:"vm"`
+	API             drillRunLayerComparisonStatus `json:"api"`
+	UIMetrics       drillRunLayerComparisonStatus `json:"uiMetrics"`
+	Graph           drillRunLayerComparisonStatus `json:"graph"`
+	ScenarioVerdict string                        `json:"scenarioVerdict"`
+	FailureReason   string                        `json:"failureReason,omitempty"`
 }
 
 type drillRunFieldMismatch struct {
@@ -568,20 +572,64 @@ func buildDrillRunComparison(
 	uiMismatch := uiHasData && runFailed
 	graphMismatch := graphHasData && runFailed
 
+	vm := buildDrillLayerComparisonStatus(vmHasData, vmMismatch, buildDrillVMMismatches(run, vmMismatch))
+	api := buildDrillLayerComparisonStatus(apiHasData, apiMismatch, buildDrillAPIMismatches(run, apiMismatch))
+	uiMetrics := buildDrillLayerComparisonStatus(
+		uiHasData,
+		uiMismatch,
+		buildDrillMetricMismatches("uiMetrics", baseline, final),
+	)
+	graphLayer := buildDrillLayerComparisonStatus(
+		graphHasData,
+		graphMismatch,
+		buildDrillMetricMismatches("graph.target", baseline, final),
+	)
+	scenarioVerdict, failureReason := resolveDrillScenarioVerdict(vm, api, uiMetrics, graphLayer)
+
 	return drillRunComparisonSnapshot{
-		VM: buildDrillLayerComparisonStatus(vmHasData, vmMismatch, buildDrillVMMismatches(run, vmMismatch)),
-		API: buildDrillLayerComparisonStatus(apiHasData, apiMismatch, buildDrillAPIMismatches(run, apiMismatch)),
-		UIMetrics: buildDrillLayerComparisonStatus(
-			uiHasData,
-			uiMismatch,
-			buildDrillMetricMismatches("uiMetrics", baseline, final),
-		),
-		Graph: buildDrillLayerComparisonStatus(
-			graphHasData,
-			graphMismatch,
-			buildDrillMetricMismatches("graph.target", baseline, final),
-		),
+		VM:              vm,
+		API:             api,
+		UIMetrics:       uiMetrics,
+		Graph:           graphLayer,
+		ScenarioVerdict: scenarioVerdict,
+		FailureReason:   failureReason,
 	}
+}
+
+func resolveDrillScenarioVerdict(
+	vm drillRunLayerComparisonStatus,
+	api drillRunLayerComparisonStatus,
+	uiMetrics drillRunLayerComparisonStatus,
+	graph drillRunLayerComparisonStatus,
+) (string, string) {
+	layers := []struct {
+		name  string
+		layer drillRunLayerComparisonStatus
+	}{
+		{name: "vm", layer: vm},
+		{name: "api", layer: api},
+		{name: "uiMetrics", layer: uiMetrics},
+		{name: "graph", layer: graph},
+	}
+
+	for _, candidate := range layers {
+		if candidate.layer.Status != drillComparisonStatusMismatch {
+			continue
+		}
+		if len(candidate.layer.Mismatches) == 0 {
+			return drillScenarioVerdictFailed, candidate.name + " layer reported mismatch"
+		}
+		mismatch := candidate.layer.Mismatches[0]
+		return drillScenarioVerdictFailed, candidate.name + " mismatch on " + mismatch.MetricName + " (expected " + mismatch.ExpectedValue + ", actual " + mismatch.ActualValue + ")"
+	}
+
+	for _, candidate := range layers {
+		if candidate.layer.Status == drillComparisonStatusMissing {
+			return drillScenarioVerdictFailed, candidate.name + " layer data is missing"
+		}
+	}
+
+	return drillScenarioVerdictPassed, ""
 }
 
 func buildDrillLayerComparisonStatus(

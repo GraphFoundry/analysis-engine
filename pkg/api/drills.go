@@ -47,6 +47,7 @@ func (h *DrillsHandler) ListScenarioCatalog(w http.ResponseWriter, r *http.Reque
 		scenarios = h.Engine.ScenarioCatalog()
 	}
 
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(drillScenarioCatalogResponse{Scenarios: scenarios})
 }

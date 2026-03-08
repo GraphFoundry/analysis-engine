@@ -19,7 +19,14 @@ func validBaseResponse() SimulationResponse {
 		EvidenceMode:      EvidenceModePartial,
 		ConfidenceLevel:   ConfidenceMedium,
 		Assumptions: []SimulationAssumption{
-			{Key: "latency_baseline", Description: "baseline latency from graph edge p95", Source: "live_service_graph"},
+			{
+				Key:         "latency_baseline",
+				Type:        AssumptionTypeEvidenceBinding,
+				Value:       "snapshot.edge.p95",
+				Description: "baseline latency from graph edge p95",
+				Source:      "live_service_graph",
+				TraceRef:    "assumptions.latency_baseline",
+			},
 		},
 		ImpactedServices: []ImpactedService{
 			{ServiceID: "svc-checkout", Name: "checkout", Namespace: "default", Role: "target"},
@@ -30,6 +37,7 @@ func validBaseResponse() SimulationResponse {
 		BeforeAfterValues: []BeforeAfterValue{
 			{
 				FieldRef:    "path_latency_p95_ms",
+				TraceRef:    "beforeAfterValues.path_latency_p95_ms",
 				Description: "p95 latency for affected path",
 				Unit:        "ms",
 				BeforeValue: &before,
@@ -38,8 +46,9 @@ func validBaseResponse() SimulationResponse {
 			},
 		},
 		Recommendation: SimulationRecommendation{
-			Action:      "failover",
-			Explanation: "Downstream callers of svc-checkout will lose traffic; failover to backup recommended.",
+			Action:             "failover",
+			Explanation:        "Downstream callers of svc-checkout will lose traffic; failover to backup recommended.",
+			EvidenceSourceRefs: []string{"live_service_graph", "live_k8s_runtime"},
 		},
 	}
 }
@@ -229,6 +238,69 @@ func TestValidateSimulationResponse_OKWithoutRecommendationAction(t *testing.T) 
 	assertErrorCode(t, err, ErrRespCodeMissingRecommendationAction)
 }
 
+func TestValidateSimulationResponse_OKWithoutRecommendationExplanation(t *testing.T) {
+	resp := validBaseResponse()
+	resp.Recommendation.Explanation = ""
+	err := ValidateSimulationResponse(resp)
+	assertErrorCode(t, err, ErrRespCodeMissingRecommendationExplanation)
+}
+
+func TestValidateSimulationResponse_OKWithoutRecommendationEvidenceRefs(t *testing.T) {
+	resp := validBaseResponse()
+	resp.Recommendation.EvidenceSourceRefs = nil
+	err := ValidateSimulationResponse(resp)
+	assertErrorCode(t, err, ErrRespCodeMissingRecommendationEvidenceRefs)
+}
+
+func TestValidateSimulationResponse_RecommendationEvidenceRefNotInEvidenceSources(t *testing.T) {
+	resp := validBaseResponse()
+	resp.Recommendation.EvidenceSourceRefs = []string{"historical_influxdb"}
+	err := ValidateSimulationResponse(resp)
+	assertErrorCode(t, err, ErrRespCodeUnknownRecommendationEvidenceRef)
+}
+
+func TestValidateSimulationResponse_BeforeAfterValueMissingTraceRef(t *testing.T) {
+	resp := validBaseResponse()
+	resp.BeforeAfterValues[0].TraceRef = ""
+	err := ValidateSimulationResponse(resp)
+	assertErrorCode(t, err, ErrRespCodeMissingBeforeAfterTraceRef)
+}
+
+func TestValidateSimulationResponse_AssumptionMissingType(t *testing.T) {
+	resp := validBaseResponse()
+	resp.Assumptions[0].Type = ""
+	err := ValidateSimulationResponse(resp)
+	assertErrorCode(t, err, ErrRespCodeMissingAssumptionType)
+}
+
+func TestValidateSimulationResponse_AssumptionInvalidType(t *testing.T) {
+	resp := validBaseResponse()
+	resp.Assumptions[0].Type = AssumptionType("UNSUPPORTED")
+	err := ValidateSimulationResponse(resp)
+	assertErrorCode(t, err, ErrRespCodeInvalidAssumptionType)
+}
+
+func TestValidateSimulationResponse_AssumptionMissingValue(t *testing.T) {
+	resp := validBaseResponse()
+	resp.Assumptions[0].Value = ""
+	err := ValidateSimulationResponse(resp)
+	assertErrorCode(t, err, ErrRespCodeMissingAssumptionValue)
+}
+
+func TestValidateSimulationResponse_AssumptionMissingSource(t *testing.T) {
+	resp := validBaseResponse()
+	resp.Assumptions[0].Source = ""
+	err := ValidateSimulationResponse(resp)
+	assertErrorCode(t, err, ErrRespCodeMissingAssumptionSource)
+}
+
+func TestValidateSimulationResponse_AssumptionMissingTraceRef(t *testing.T) {
+	resp := validBaseResponse()
+	resp.Assumptions[0].TraceRef = ""
+	err := ValidateSimulationResponse(resp)
+	assertErrorCode(t, err, ErrRespCodeMissingAssumptionTraceRef)
+}
+
 func TestValidateSimulationResponse_SnapshotHashOptional(t *testing.T) {
 	resp := validBaseResponse()
 	resp.SnapshotHash = ""
@@ -313,6 +385,7 @@ func TestSimulationResponseFields_BeforeAfterValue(t *testing.T) {
 	delta := 10.0
 	bav := BeforeAfterValue{
 		FieldRef:    "path_latency_p95_ms",
+		TraceRef:    "beforeAfterValues.path_latency_p95_ms",
 		Description: "p95 path latency",
 		Unit:        "ms",
 		BeforeValue: &before,
@@ -321,6 +394,9 @@ func TestSimulationResponseFields_BeforeAfterValue(t *testing.T) {
 	}
 	if bav.FieldRef != "path_latency_p95_ms" {
 		t.Errorf("unexpected FieldRef: %s", bav.FieldRef)
+	}
+	if bav.TraceRef != "beforeAfterValues.path_latency_p95_ms" {
+		t.Errorf("unexpected TraceRef: %s", bav.TraceRef)
 	}
 	if *bav.DeltaValue != 10.0 {
 		t.Errorf("unexpected DeltaValue: %f", *bav.DeltaValue)

@@ -3,6 +3,7 @@ package simulation
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 )
 
 // ExecutionContext bundles all resolved inputs needed by a scenario model.
@@ -77,10 +78,43 @@ func SortAssumptions(assumptions []SimulationAssumption) []SimulationAssumption 
 // NormalizeResponse must be called before CanonicalizeResponse.
 // EvidenceSources is NOT sorted because its order encodes mandatory tier priority.
 func NormalizeResponse(resp *SimulationResponse) {
+	EnsureResponseTraceability(resp)
 	SortImpactedServices(resp.ImpactedServices)
 	SortImpactedPaths(resp.ImpactedPaths)
 	SortBeforeAfterValues(resp.BeforeAfterValues)
 	SortAssumptions(resp.Assumptions)
+}
+
+// EnsureResponseTraceability backfills traceability fields that are required by the
+// canonical response contract but may be omitted by individual scenario builders.
+// It applies deterministic defaults only when fields are empty.
+func EnsureResponseTraceability(resp *SimulationResponse) {
+	for i := range resp.BeforeAfterValues {
+		if strings.TrimSpace(resp.BeforeAfterValues[i].TraceRef) == "" && strings.TrimSpace(resp.BeforeAfterValues[i].FieldRef) != "" {
+			resp.BeforeAfterValues[i].TraceRef = "beforeAfterValues." + resp.BeforeAfterValues[i].FieldRef
+		}
+	}
+
+	for i := range resp.Assumptions {
+		assumption := &resp.Assumptions[i]
+		if assumption.Type == "" {
+			if assumption.Source == "engine_default" {
+				assumption.Type = AssumptionTypeModelConstant
+			} else {
+				assumption.Type = AssumptionTypeEvidenceBinding
+			}
+		}
+		if strings.TrimSpace(assumption.Value) == "" && strings.TrimSpace(assumption.Key) != "" {
+			assumption.Value = assumption.Key
+		}
+		if strings.TrimSpace(assumption.TraceRef) == "" && strings.TrimSpace(assumption.Key) != "" {
+			assumption.TraceRef = "assumptions." + assumption.Key
+		}
+	}
+
+	if resp.ResultStatus == ResultStatusOK && resp.Recommendation.Action != "" && len(resp.Recommendation.EvidenceSourceRefs) == 0 {
+		resp.Recommendation.EvidenceSourceRefs = append([]string(nil), resp.EvidenceSources...)
+	}
 }
 
 // CanonicalizeResponse serialises a SimulationResponse to canonical JSON bytes.

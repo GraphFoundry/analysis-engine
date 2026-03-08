@@ -1,6 +1,9 @@
 package simulation
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ConfidenceLevel classifies how confident the simulation output is, based on available evidence tiers.
 type ConfidenceLevel string
@@ -40,6 +43,16 @@ const (
 	ResultStatusUnsupported SimulationResultStatus = "UNSUPPORTED"
 )
 
+// AssumptionType classifies the machine-readable structure of an assumption.
+type AssumptionType string
+
+const (
+	AssumptionTypeModelConstant  AssumptionType = "MODEL_CONSTANT"
+	AssumptionTypeFormula        AssumptionType = "FORMULA"
+	AssumptionTypeEvidenceBinding AssumptionType = "EVIDENCE_BINDING"
+	AssumptionTypeClassification AssumptionType = "CLASSIFICATION"
+)
+
 // ImpactedService identifies a service affected by the simulation.
 type ImpactedService struct {
 	ServiceID string `json:"serviceId"`
@@ -56,7 +69,9 @@ type ImpactedPath struct {
 // BeforeAfterValue captures a before/after numeric measurement for a simulation output field.
 type BeforeAfterValue struct {
 	// FieldRef identifies this value for UI/BFF traceability mapping.
-	FieldRef    string   `json:"fieldRef"`
+	FieldRef string `json:"fieldRef"`
+	// TraceRef is the stable response-field mapping path used by BFF/UI bindings.
+	TraceRef    string   `json:"traceRef"`
 	Description string   `json:"description"`
 	Unit        string   `json:"unit,omitempty"`
 	BeforeValue *float64 `json:"beforeValue"`
@@ -66,15 +81,19 @@ type BeforeAfterValue struct {
 
 // SimulationAssumption is a single declared, machine-readable assumption used in the simulation.
 type SimulationAssumption struct {
-	Key         string `json:"key"`
-	Description string `json:"description"`
-	Source      string `json:"source"` // e.g. evidence source label or "engine_default"
+	Key         string         `json:"key"`
+	Type        AssumptionType `json:"type"`
+	Value       string         `json:"value"`
+	Description string         `json:"description"`
+	Source      string         `json:"source"` // e.g. evidence source label or "engine_default"
+	TraceRef    string         `json:"traceRef"`
 }
 
 // SimulationRecommendation is the operator recommendation output.
 type SimulationRecommendation struct {
-	Action      string `json:"action"`      // e.g. "scale_up", "co_locate", "migrate", "no_change", "failover"
-	Explanation string `json:"explanation"` // human-readable rationale citing evidence sources
+	Action             string   `json:"action"`                       // e.g. "scale_up", "co_locate", "migrate", "no_change", "failover"
+	Explanation        string   `json:"explanation"`                  // human-readable rationale citing evidence sources
+	EvidenceSourceRefs []string `json:"evidenceSourceRefs,omitempty"` // evidence source labels used in recommendation selection
 }
 
 // SimulationResponse is the canonical versioned response schema for all simulation scenarios.
@@ -83,7 +102,7 @@ type SimulationRecommendation struct {
 //   - Version, ScenarioType, SnapshotTimestamp, ResultStatus
 //   - EvidenceSources, EvidenceMode, ConfidenceLevel
 //   - ImpactedServices, ImpactedPaths, BeforeAfterValues
-//   - Recommendation, Assumptions
+//   - Recommendation (including Explanation and EvidenceSourceRefs), Assumptions
 //
 // Optional fields (may be absent for deferred/unsupported or when unavailable):
 //   - SnapshotHash, DegradedMode, DegradedModeReason, DeferredReason
@@ -225,6 +244,82 @@ func ValidateSimulationResponse(resp SimulationResponse) error {
 		})
 	}
 
+	if resp.ResultStatus == ResultStatusOK && resp.Recommendation.Explanation == "" {
+		errs = append(errs, ValidationError{
+			Code:    ErrRespCodeMissingRecommendationExplanation,
+			Message: "response recommendation.explanation is required for OK results",
+		})
+	}
+
+	if resp.ResultStatus == ResultStatusOK && len(resp.Recommendation.EvidenceSourceRefs) == 0 {
+		errs = append(errs, ValidationError{
+			Code:    ErrRespCodeMissingRecommendationEvidenceRefs,
+			Message: "response recommendation.evidenceSourceRefs must include evidence labels used in decision selection",
+		})
+	}
+
+	for _, evidenceRef := range resp.Recommendation.EvidenceSourceRefs {
+		if !containsString(resp.EvidenceSources, evidenceRef) {
+			errs = append(errs, ValidationError{
+				Code:    ErrRespCodeUnknownRecommendationEvidenceRef,
+				Message: fmt.Sprintf("recommendation.evidenceSourceRefs contains %q which is not present in response evidenceSources", evidenceRef),
+			})
+		}
+	}
+
+	for i, bav := range resp.BeforeAfterValues {
+		if strings.TrimSpace(bav.FieldRef) == "" {
+			errs = append(errs, ValidationError{
+				Code:    ErrRespCodeMissingBeforeAfterFieldRef,
+				Message: fmt.Sprintf("response beforeAfterValues[%d].fieldRef is required", i),
+			})
+		}
+		if strings.TrimSpace(bav.TraceRef) == "" {
+			errs = append(errs, ValidationError{
+				Code:    ErrRespCodeMissingBeforeAfterTraceRef,
+				Message: fmt.Sprintf("response beforeAfterValues[%d].traceRef is required for field-level UI/BFF mapping", i),
+			})
+		}
+	}
+
+	for i, assumption := range resp.Assumptions {
+		if strings.TrimSpace(assumption.Key) == "" {
+			errs = append(errs, ValidationError{
+				Code:    ErrRespCodeMissingAssumptionKey,
+				Message: fmt.Sprintf("response assumptions[%d].key is required", i),
+			})
+		}
+		if assumption.Type == "" {
+			errs = append(errs, ValidationError{
+				Code:    ErrRespCodeMissingAssumptionType,
+				Message: fmt.Sprintf("response assumptions[%d].type is required", i),
+			})
+		} else if !isValidAssumptionType(assumption.Type) {
+			errs = append(errs, ValidationError{
+				Code:    ErrRespCodeInvalidAssumptionType,
+				Message: fmt.Sprintf("response assumptions[%d].type %q is not valid", i, assumption.Type),
+			})
+		}
+		if strings.TrimSpace(assumption.Value) == "" {
+			errs = append(errs, ValidationError{
+				Code:    ErrRespCodeMissingAssumptionValue,
+				Message: fmt.Sprintf("response assumptions[%d].value is required", i),
+			})
+		}
+		if strings.TrimSpace(assumption.Source) == "" {
+			errs = append(errs, ValidationError{
+				Code:    ErrRespCodeMissingAssumptionSource,
+				Message: fmt.Sprintf("response assumptions[%d].source is required", i),
+			})
+		}
+		if strings.TrimSpace(assumption.TraceRef) == "" {
+			errs = append(errs, ValidationError{
+				Code:    ErrRespCodeMissingAssumptionTraceRef,
+				Message: fmt.Sprintf("response assumptions[%d].traceRef is required", i),
+			})
+		}
+	}
+
 	if len(errs) == 0 {
 		return nil
 	}
@@ -258,21 +353,49 @@ func isValidConfidenceLevel(l ConfidenceLevel) bool {
 	return false
 }
 
+func isValidAssumptionType(t AssumptionType) bool {
+	switch t {
+	case AssumptionTypeModelConstant, AssumptionTypeFormula, AssumptionTypeEvidenceBinding, AssumptionTypeClassification:
+		return true
+	}
+	return false
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 // Response-schema stable validation error codes.
 const (
-	ErrRespCodeMissingVersion             = "SIM_RESP_ERR_001"
-	ErrRespCodeInvalidVersion             = "SIM_RESP_ERR_002"
-	ErrRespCodeMissingScenarioType        = "SIM_RESP_ERR_003"
-	ErrRespCodeInvalidScenarioType        = "SIM_RESP_ERR_004"
-	ErrRespCodeMissingSnapshotTimestamp   = "SIM_RESP_ERR_005"
-	ErrRespCodeMissingResultStatus        = "SIM_RESP_ERR_006"
-	ErrRespCodeInvalidResultStatus        = "SIM_RESP_ERR_007"
-	ErrRespCodeMissingEvidenceSources     = "SIM_RESP_ERR_008"
-	ErrRespCodeMissingEvidenceMode        = "SIM_RESP_ERR_009"
-	ErrRespCodeInvalidEvidenceMode        = "SIM_RESP_ERR_010"
-	ErrRespCodeMissingConfidenceLevel     = "SIM_RESP_ERR_011"
-	ErrRespCodeInvalidConfidenceLevel     = "SIM_RESP_ERR_012"
-	ErrRespCodeMissingDegradedReason      = "SIM_RESP_ERR_013"
-	ErrRespCodeMissingDeferredReason      = "SIM_RESP_ERR_014"
-	ErrRespCodeMissingRecommendationAction = "SIM_RESP_ERR_015"
+	ErrRespCodeMissingVersion                    = "SIM_RESP_ERR_001"
+	ErrRespCodeInvalidVersion                    = "SIM_RESP_ERR_002"
+	ErrRespCodeMissingScenarioType               = "SIM_RESP_ERR_003"
+	ErrRespCodeInvalidScenarioType               = "SIM_RESP_ERR_004"
+	ErrRespCodeMissingSnapshotTimestamp          = "SIM_RESP_ERR_005"
+	ErrRespCodeMissingResultStatus               = "SIM_RESP_ERR_006"
+	ErrRespCodeInvalidResultStatus               = "SIM_RESP_ERR_007"
+	ErrRespCodeMissingEvidenceSources            = "SIM_RESP_ERR_008"
+	ErrRespCodeMissingEvidenceMode               = "SIM_RESP_ERR_009"
+	ErrRespCodeInvalidEvidenceMode               = "SIM_RESP_ERR_010"
+	ErrRespCodeMissingConfidenceLevel            = "SIM_RESP_ERR_011"
+	ErrRespCodeInvalidConfidenceLevel            = "SIM_RESP_ERR_012"
+	ErrRespCodeMissingDegradedReason             = "SIM_RESP_ERR_013"
+	ErrRespCodeMissingDeferredReason             = "SIM_RESP_ERR_014"
+	ErrRespCodeMissingRecommendationAction       = "SIM_RESP_ERR_015"
+	ErrRespCodeMissingRecommendationExplanation  = "SIM_RESP_ERR_016"
+	ErrRespCodeMissingRecommendationEvidenceRefs = "SIM_RESP_ERR_017"
+	ErrRespCodeUnknownRecommendationEvidenceRef  = "SIM_RESP_ERR_018"
+	ErrRespCodeMissingBeforeAfterFieldRef        = "SIM_RESP_ERR_019"
+	ErrRespCodeMissingBeforeAfterTraceRef        = "SIM_RESP_ERR_020"
+	ErrRespCodeMissingAssumptionKey              = "SIM_RESP_ERR_021"
+	ErrRespCodeMissingAssumptionType             = "SIM_RESP_ERR_022"
+	ErrRespCodeInvalidAssumptionType             = "SIM_RESP_ERR_023"
+	ErrRespCodeMissingAssumptionValue            = "SIM_RESP_ERR_024"
+	ErrRespCodeMissingAssumptionSource           = "SIM_RESP_ERR_025"
+	ErrRespCodeMissingAssumptionTraceRef         = "SIM_RESP_ERR_026"
 )

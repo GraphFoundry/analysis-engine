@@ -18,20 +18,20 @@ const (
 type EvidenceMode string
 
 const (
-	EvidenceModeFull       EvidenceMode = "FULL"       // live graph + live runtime + Influx history
-	EvidenceModePartial    EvidenceMode = "PARTIAL"    // live graph + live runtime, no Influx history
-	EvidenceModeDegraded   EvidenceMode = "DEGRADED"   // deterministic fallback only (Influx unavailable/sparse)
-	EvidenceModeFallback   EvidenceMode = "FALLBACK"   // deterministic fallback used for all tiers
+	EvidenceModeFull     EvidenceMode = "FULL"     // live graph + live runtime + Influx history
+	EvidenceModePartial  EvidenceMode = "PARTIAL"  // live graph + live runtime, no Influx history
+	EvidenceModeDegraded EvidenceMode = "DEGRADED" // deterministic fallback only (Influx unavailable/sparse)
+	EvidenceModeFallback EvidenceMode = "FALLBACK" // deterministic fallback used for all tiers
 )
 
 // DegradedMode describes why degraded evidence mode is active.
 type DegradedMode string
 
 const (
-	DegradedModeNone          DegradedMode = ""                   // not in degraded mode
-	DegradedModeInfluxEmpty   DegradedMode = "INFLUX_EMPTY"       // InfluxDB returned no data
-	DegradedModeInfluxSparse  DegradedMode = "INFLUX_SPARSE"      // InfluxDB data insufficient
-	DegradedModeInfluxError   DegradedMode = "INFLUX_ERROR"       // InfluxDB query failed
+	DegradedModeNone         DegradedMode = ""              // not in degraded mode
+	DegradedModeInfluxEmpty  DegradedMode = "INFLUX_EMPTY"  // InfluxDB returned no data
+	DegradedModeInfluxSparse DegradedMode = "INFLUX_SPARSE" // InfluxDB data insufficient
+	DegradedModeInfluxError  DegradedMode = "INFLUX_ERROR"  // InfluxDB query failed
 )
 
 // SimulationResultStatus describes whether the result is actionable or deferred/unsupported.
@@ -47,10 +47,10 @@ const (
 type AssumptionType string
 
 const (
-	AssumptionTypeModelConstant  AssumptionType = "MODEL_CONSTANT"
-	AssumptionTypeFormula        AssumptionType = "FORMULA"
+	AssumptionTypeModelConstant   AssumptionType = "MODEL_CONSTANT"
+	AssumptionTypeFormula         AssumptionType = "FORMULA"
 	AssumptionTypeEvidenceBinding AssumptionType = "EVIDENCE_BINDING"
-	AssumptionTypeClassification AssumptionType = "CLASSIFICATION"
+	AssumptionTypeClassification  AssumptionType = "CLASSIFICATION"
 )
 
 // ImpactedService identifies a service affected by the simulation.
@@ -399,3 +399,13 @@ const (
 	ErrRespCodeMissingAssumptionSource           = "SIM_RESP_ERR_025"
 	ErrRespCodeMissingAssumptionTraceRef         = "SIM_RESP_ERR_026"
 )
+
+// SimulationErrorResponse is the error payload returned by the /simulations/run endpoint
+// when validation fails or the simulation is deferred/unsupported.
+type SimulationErrorResponse struct {
+	Error          string            `json:"error"`
+	ResultStatus   string            `json:"resultStatus,omitempty"`
+	DeferredReason string            `json:"deferredReason,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	Errors         []ValidationError `json:"errors,omitempty"`
+}

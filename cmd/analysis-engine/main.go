@@ -106,6 +106,7 @@ func main() {
 	r.Post("/simulate/add", apiHandler.SimulateAddHandler)
 	r.Get("/simulate/context", apiHandler.SimulateContextHandler)
 	r.Get("/simulations/capabilities", apiHandler.SimulationCapabilitiesHandler)
+	r.Post("/simulations/run", apiHandler.SimulationsRunHandler)
 	r.Get("/demo/snapshots", apiHandler.DemoSnapshotsHandler)
 	r.Get("/dependency-graph/snapshot", apiHandler.DependencyGraphHandler)
 	r.Get("/predictive/actions/current", apiHandler.PredictiveCurrentActionHandler)

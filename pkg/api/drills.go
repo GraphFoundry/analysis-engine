@@ -32,6 +32,7 @@ func (h *DrillsHandler) RegisterRoutes(r chi.Router) {
 		r.Post("/runs/{id}/abort", h.AbortDrillRun)
 		r.Post("/runs/{id}/recover", h.RecoverDrillRun)
 		r.Post("/runs/{id}/accept", h.AcceptDrillRun)
+		r.Post("/runs/{id}/verify-rollback", h.VerifyDrillRollback)
 		r.Get("/history", h.ListHistory)
 	})
 }
@@ -365,6 +366,26 @@ func (h *DrillsHandler) AcceptDrillRun(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+}
+
+func (h *DrillsHandler) VerifyDrillRollback(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, "Missing drill run id", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.Engine.VerifyDrillRollback(id); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, drills.ErrRunNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "verified"})
 }
 
 func (h *DrillsHandler) K8sHealth(w http.ResponseWriter, r *http.Request) {

@@ -35,6 +35,7 @@ var (
 	ErrDrillNotActive      = errors.New("drill is not actively running")
 	ErrDrillNotRecoverable = errors.New("drill is not awaiting recovery")
 	ErrRollbackGateBlocked = errors.New("rollback verification is required before starting the next scenario")
+	ErrRunNotFound         = errors.New("drill run not found")
 )
 
 type recoveryTrigger struct {
@@ -639,6 +640,20 @@ func (e *Engine) logStep(runID, phase, message, status string) {
 		Message:   message,
 		Status:    status,
 	})
+}
+
+func (e *Engine) VerifyDrillRollback(runID string) error {
+	if e.store == nil {
+		return nil
+	}
+	run, err := e.store.GetDrillRun(runID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch run: %w", err)
+	}
+	if run == nil {
+		return ErrRunNotFound
+	}
+	return e.recordRollbackVerification(run, "manual_override")
 }
 
 func (e *Engine) failRun(run *storage.DrillRun, phase, reason string) {

@@ -167,10 +167,14 @@ func SimulateFailure(ctx context.Context, client *graph.Client, req FailureSimul
 		if healthRes.Stale {
 			confidence = "low"
 		}
+		var luSecAgo int
+		if healthRes.LastUpdatedSecondsAgo != nil {
+			luSecAgo = *healthRes.LastUpdatedSecondsAgo
+		}
 		df = &DataFreshness{
 			Source:                "graph-engine",
 			Stale:                 healthRes.Stale,
-			LastUpdatedSecondsAgo: healthRes.LastUpdatedSecondsAgo,
+			LastUpdatedSecondsAgo: luSecAgo,
 			WindowMinutes:         healthRes.WindowMinutes,
 		}
 	}

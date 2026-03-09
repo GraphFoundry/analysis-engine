@@ -31,10 +31,14 @@ func GetTopRiskServices(ctx context.Context, client *graph.Client, metric string
 	confidence := "unknown"
 
 	if err == nil && healthResult != nil {
+		var luSecAgo int
+		if healthResult.LastUpdatedSecondsAgo != nil {
+			luSecAgo = *healthResult.LastUpdatedSecondsAgo
+		}
 		dataFreshness = graph.DataFreshness{
 			Source:                "graph-engine",
 			Stale:                 healthResult.Stale,
-			LastUpdatedSecondsAgo: healthResult.LastUpdatedSecondsAgo,
+			LastUpdatedSecondsAgo: luSecAgo,
 			WindowMinutes:         healthResult.WindowMinutes,
 		}
 		if healthResult.Stale {

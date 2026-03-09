@@ -84,7 +84,7 @@ func main() {
 			UsersEnvName:   cfg.Drills.TargetedLoadUsersEnv,
 		},
 	})
-	drillsHandler := &api.DrillsHandler{Engine: drillEngine, Store: store}
+	drillsHandler := &api.DrillsHandler{Engine: drillEngine, Store: store, GraphClient: graphClient}
 
 	r := chi.NewRouter()
 

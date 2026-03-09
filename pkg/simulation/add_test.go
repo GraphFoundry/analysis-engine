@@ -311,7 +311,7 @@ func makeServiceInfo(serviceID string, availability float64, podCount int, place
 	}
 }
 
-func makeNodePlacement(node string, cpuUsagePercent float64, cpuCores int, ramUsedMB, ramTotalMB float64) graph.NodePlacement {
+func makeNodePlacement(node string, cpuUsagePercent float64, cpuCores float64, ramUsedMB, ramTotalMB float64) graph.NodePlacement {
 	return graph.NodePlacement{
 		Node: node,
 		Resources: graph.NodeResources{

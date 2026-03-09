@@ -17,8 +17,9 @@ import (
 )
 
 type DrillsHandler struct {
-	Engine *drills.Engine
-	Store  *storage.DecisionStore
+	Engine      *drills.Engine
+	Store       *storage.DecisionStore
+	GraphClient *graph.Client
 }
 
 func (h *DrillsHandler) RegisterRoutes(r chi.Router) {
@@ -255,8 +256,22 @@ func (h *DrillsHandler) GetDrillRunSnapshot(w http.ResponseWriter, r *http.Reque
 	preTimestamp := extractDrillSnapshotTimestamp(preSnapshot)
 	postTimestamp := extractDrillSnapshotTimestamp(postSnapshot)
 
-	baseline := extractDrillServiceMetrics(preSnapshot, targetService, targetNamespace)
-	final := extractDrillServiceMetrics(postSnapshot, targetService, targetNamespace)
+	var serviceInfoMap map[string]graph.ServiceInfo
+	if h.GraphClient != nil {
+		if services, err := h.GraphClient.GetServices(r.Context()); err == nil {
+			serviceInfoMap = make(map[string]graph.ServiceInfo, len(services))
+			for _, s := range services {
+				ns := s.Namespace
+				if ns == "" {
+					ns = "default"
+				}
+				serviceInfoMap[ns+":"+s.Name] = s
+			}
+		}
+	}
+
+	baseline := extractDrillServiceMetrics(preSnapshot, targetService, targetNamespace, serviceInfoMap)
+	final := extractDrillServiceMetrics(postSnapshot, targetService, targetNamespace, serviceInfoMap)
 
 	vmState := drillRunVMSnapshot{
 		Status:          run.Status,
@@ -299,7 +314,7 @@ func (h *DrillsHandler) GetDrillRunSnapshot(w http.ResponseWriter, r *http.Reque
 			Baseline:        baseline,
 			Final:           final,
 		},
-		GraphSummary: buildDrillGraphSummary(graphSnapshot, targetService, targetNamespace, graphTimestamp),
+		GraphSummary: buildDrillGraphSummary(graphSnapshot, targetService, targetNamespace, graphTimestamp, serviceInfoMap),
 		Comparison:   buildDrillRunComparison(run, baseline, final, graphSnapshot),
 	}
 
@@ -497,13 +512,26 @@ func decodeDrillMetricsSnapshot(raw json.RawMessage) *graph.MetricsSnapshotRespo
 	return &snapshot
 }
 
-func extractDrillServiceMetrics(snapshot *graph.MetricsSnapshotResponse, service, namespace string) *drillRunServiceMetricValues {
+func extractDrillServiceMetrics(snapshot *graph.MetricsSnapshotResponse, service, namespace string, serviceInfoMap map[string]graph.ServiceInfo) *drillRunServiceMetricValues {
 	if snapshot == nil || strings.TrimSpace(service) == "" {
 		return nil
 	}
 
 	normalizedService := strings.TrimSpace(service)
 	normalizedNamespace := strings.TrimSpace(namespace)
+
+	lookupServiceInfo := func(name, ns string) (int, float64) {
+		if serviceInfoMap == nil {
+			return 0, 0
+		}
+		if ns == "" {
+			ns = "default"
+		}
+		if info, ok := serviceInfoMap[ns+":"+name]; ok {
+			return info.PodCount, info.Availability
+		}
+		return 0, 0
+	}
 
 	for i := range snapshot.Services {
 		candidate := snapshot.Services[i]
@@ -513,15 +541,15 @@ func extractDrillServiceMetrics(snapshot *graph.MetricsSnapshotResponse, service
 		if normalizedNamespace != "" && !strings.EqualFold(candidate.Namespace, normalizedNamespace) {
 			continue
 		}
-
+		podCount, availability := lookupServiceInfo(candidate.Name, candidate.Namespace)
 		return &drillRunServiceMetricValues{
 			Service:      candidate.Name,
 			Namespace:    candidate.Namespace,
 			RPS:          candidate.RPS,
 			ErrorRate:    candidate.ErrorRate,
 			P95:          candidate.P95,
-			Availability: candidate.Availability.Value,
-			PodCount:     candidate.PodCount.Value,
+			Availability: availability,
+			PodCount:     podCount,
 		}
 	}
 
@@ -534,21 +562,22 @@ func extractDrillServiceMetrics(snapshot *graph.MetricsSnapshotResponse, service
 		if !strings.EqualFold(candidate.Name, normalizedService) {
 			continue
 		}
+		podCount, availability := lookupServiceInfo(candidate.Name, candidate.Namespace)
 		return &drillRunServiceMetricValues{
 			Service:      candidate.Name,
 			Namespace:    candidate.Namespace,
 			RPS:          candidate.RPS,
 			ErrorRate:    candidate.ErrorRate,
 			P95:          candidate.P95,
-			Availability: candidate.Availability.Value,
-			PodCount:     candidate.PodCount.Value,
+			Availability: availability,
+			PodCount:     podCount,
 		}
 	}
 
 	return nil
 }
 
-func buildDrillGraphSummary(snapshot *graph.MetricsSnapshotResponse, service, namespace string, sourceTimestamp *string) drillRunGraphSummarySnapshot {
+func buildDrillGraphSummary(snapshot *graph.MetricsSnapshotResponse, service, namespace string, sourceTimestamp *string, serviceInfoMap map[string]graph.ServiceInfo) drillRunGraphSummarySnapshot {
 	if snapshot == nil {
 		return drillRunGraphSummarySnapshot{}
 	}
@@ -557,7 +586,7 @@ func buildDrillGraphSummary(snapshot *graph.MetricsSnapshotResponse, service, na
 		ServiceCount:    len(snapshot.Services),
 		EdgeCount:       len(snapshot.Edges),
 		SourceTimestamp: sourceTimestamp,
-		Target:          extractDrillServiceMetrics(snapshot, service, namespace),
+		Target:          extractDrillServiceMetrics(snapshot, service, namespace, serviceInfoMap),
 	}
 }
 

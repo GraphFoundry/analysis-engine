@@ -138,7 +138,7 @@ func (h *Handler) ServicesHandler(w http.ResponseWriter, r *http.Request) {
 
 	if hRes.err == nil {
 		stale = hRes.data.Stale
-		lastUpdated = &hRes.data.LastUpdatedSecondsAgo
+		lastUpdated = hRes.data.LastUpdatedSecondsAgo
 		windowMinutes = hRes.data.WindowMinutes
 	}
 

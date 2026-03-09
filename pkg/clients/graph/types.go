@@ -7,7 +7,7 @@ import (
 
 type HealthResponse struct {
 	Status                string `json:"status"`
-	LastUpdatedSecondsAgo int    `json:"lastUpdatedSecondsAgo"`
+	LastUpdatedSecondsAgo *int   `json:"lastUpdatedSecondsAgo"`
 	WindowMinutes         int    `json:"windowMinutes"`
 	Stale                 bool   `json:"stale"`
 }

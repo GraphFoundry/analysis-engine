@@ -17,6 +17,7 @@ import (
 	"predictive-analysis-engine/pkg/logger"
 	"predictive-analysis-engine/pkg/predictive"
 	"predictive-analysis-engine/pkg/simulation"
+	"predictive-analysis-engine/pkg/storage"
 )
 
 type Handler struct {
@@ -25,15 +26,17 @@ type Handler struct {
 	SimulationService   *simulation.Service
 	PredictiveEvaluator PredictiveActionEvaluator
 	StartTime           time.Time
+	Store               *storage.DecisionStore
 }
 
-func NewHandler(cfg *config.Config, graphClient *graph.Client, simService *simulation.Service) *Handler {
+func NewHandler(cfg *config.Config, graphClient *graph.Client, simService *simulation.Service, store *storage.DecisionStore) *Handler {
 	return &Handler{
 		Config:              cfg,
 		GraphClient:         graphClient,
 		SimulationService:   simService,
 		PredictiveEvaluator: predictive.NewEvaluator(graphClient),
 		StartTime:           time.Now(),
+		Store:               store,
 	}
 }
 

@@ -65,7 +65,7 @@ func main() {
 
 	simService := simulation.NewService(cfg, graphClient, store)
 
-	apiHandler := api.NewHandler(cfg, graphClient, simService)
+	apiHandler := api.NewHandler(cfg, graphClient, simService, store)
 	decisionsHandler := &api.DecisionsHandler{Store: store}
 	telemetryHandler := &api.TelemetryHandler{Client: telemetryClient, Cfg: cfg}
 

@@ -11,6 +11,7 @@ import (
 	"predictive-analysis-engine/pkg/clients/graph"
 	"predictive-analysis-engine/pkg/logger"
 	"predictive-analysis-engine/pkg/simulation"
+	"predictive-analysis-engine/pkg/storage"
 )
 
 // SimulationsRunHandler handles the unified POST /simulations/run endpoint.
@@ -77,7 +78,86 @@ func (h *Handler) SimulationsRunHandler(w http.ResponseWriter, r *http.Request) 
 
 	resp := h.dispatchScenario(execCtx)
 	simulation.NormalizeResponse(&resp)
+
+	if resp.ResultStatus == simulation.ResultStatusOK && h.Store != nil {
+		h.logSimulationDecision(req, resp)
+	}
+
 	respondJSON(w, http.StatusOK, resp)
+}
+
+// logSimulationDecision persists a completed simulation run to the decision audit trail.
+func (h *Handler) logSimulationDecision(req simulation.SimulationRequest, resp simulation.SimulationResponse) {
+	decisionType, scenario := buildDecisionRecord(req)
+	input := storage.LogDecisionInput{
+		Timestamp: resp.SnapshotTimestamp,
+		Type:      decisionType,
+		Scenario:  scenario,
+		Result:    resp,
+	}
+	if _, err := h.Store.LogDecision(input); err != nil {
+		logger.Error("Failed to log simulation decision to history", err)
+	}
+}
+
+// buildDecisionRecord maps a SimulationRequest to the (type, scenario) pair stored in the DB.
+// The scenario map always contains a top-level "serviceId" so the History page can render it.
+func buildDecisionRecord(req simulation.SimulationRequest) (string, map[string]interface{}) {
+	switch req.ScenarioType {
+	case simulation.ScenarioFailureShutdown:
+		p := req.FailureShutdownParams
+		if p == nil {
+			return "failure", map[string]interface{}{}
+		}
+		return "failure", map[string]interface{}{
+			"serviceId": p.TargetServiceID,
+			"maxDepth":  p.MaxDepth,
+		}
+	case simulation.ScenarioScaling:
+		p := req.ScalingParams
+		if p == nil {
+			return "scaling", map[string]interface{}{}
+		}
+		return "scaling", map[string]interface{}{
+			"serviceId":   p.TargetServiceID,
+			"currentPods": p.CurrentPods,
+			"newPods":     p.NewPods,
+		}
+	case simulation.ScenarioTrafficSpike:
+		p := req.TrafficSpikeParams
+		if p == nil {
+			return "traffic_spike", map[string]interface{}{}
+		}
+		return "traffic_spike", map[string]interface{}{
+			"serviceId":      p.TargetServiceID,
+			"loadMultiplier": p.LoadMultiplier,
+		}
+	case simulation.ScenarioChattyColocation:
+		p := req.ChattyColocationParams
+		if p == nil {
+			return "chatty_colocation", map[string]interface{}{}
+		}
+		return "chatty_colocation", map[string]interface{}{
+			"sourceServiceId": p.SourceServiceID,
+			"serviceId":       p.TargetServiceID,
+		}
+	case simulation.ScenarioNetworkCut:
+		p := req.NetworkCutParams
+		if p == nil {
+			return "network_cut", map[string]interface{}{}
+		}
+		m := map[string]interface{}{}
+		if len(p.AffectedLinks) > 0 {
+			m["sourceServiceId"] = p.AffectedLinks[0].SourceServiceID
+			m["serviceId"] = p.AffectedLinks[0].TargetServiceID
+		}
+		if p.DegradationPercent != nil {
+			m["degradationPercent"] = *p.DegradationPercent
+		}
+		return "network_cut", m
+	default:
+		return string(req.ScenarioType), map[string]interface{}{}
+	}
 }
 
 // dispatchScenario routes to the correct scenario runner based on ScenarioType.

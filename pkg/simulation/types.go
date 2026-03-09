@@ -119,52 +119,97 @@ type FailureRecommendation struct {
 }
 
 type AddSimulationRequest struct {
-	ServiceName  string          `json:"serviceName"`
-	CPURequest   float64         `json:"cpuRequest"`
-	RAMRequest   int             `json:"ramRequest"`
-	Replicas     int             `json:"replicas"`
-	TimeWindow   string          `json:"timeWindow,omitempty"`
-	Dependencies []DependencyRef `json:"dependencies,omitempty"`
+	ServiceName    string          `json:"serviceName"`
+	TargetNodeName string          `json:"targetNodeName,omitempty"`
+	CPURequest     float64         `json:"cpuRequest"`
+	RAMRequest     int             `json:"ramRequest"`
+	Replicas       int             `json:"replicas"`
+	TimeWindow     string          `json:"timeWindow,omitempty"`
+	Dependencies   []DependencyRef `json:"dependencies,omitempty"`
 }
 
 type DependencyRef struct {
 	ServiceId string `json:"serviceId"`
+	Relation  string `json:"relation,omitempty"`
 }
 
 type AddSimulationResult struct {
-	TargetServiceName string                  `json:"targetServiceName"`
-	Success           bool                    `json:"success"`
-	Confidence        string                  `json:"confidence"`
-	Explanation       string                  `json:"explanation"`
-	TotalCapacityPods int                     `json:"totalCapacityPods"`
-	SuitableNodes     []NodeCapacity          `json:"suitableNodes"`
-	RiskAnalysis      AddRiskAnalysis         `json:"riskAnalysis"`
-	Recommendations   []FailureRecommendation `json:"recommendations"`
-	Recommendation    *LegacyRecommendation   `json:"recommendation,omitempty"`
+	TargetServiceName    string                  `json:"targetServiceName"`
+	Success              bool                    `json:"success"`
+	Confidence           string                  `json:"confidence"`
+	Explanation          string                  `json:"explanation"`
+	TotalCapacityPods    int                     `json:"totalCapacityPods"`
+	SelectedNodeName     string                  `json:"selectedNodeName,omitempty"`
+	SelectedNodeSuitable bool                    `json:"selectedNodeSuitable"`
+	RecommendedNodeName  string                  `json:"recommendedNodeName,omitempty"`
+	SuitableNodes        []NodeCapacity          `json:"suitableNodes"`
+	AggregateResources   AggregateResources      `json:"aggregateResources"`
+	DependencyAnalysis   AddDependencyAnalysis   `json:"dependencyAnalysis"`
+	RiskAnalysis         AddRiskAnalysis         `json:"riskAnalysis"`
+	Recommendations      []FailureRecommendation `json:"recommendations"`
+	Recommendation       *LegacyRecommendation   `json:"recommendation,omitempty"`
 }
 
 type NodeCapacity struct {
-	Node           string  `json:"node"`
-	CPUAvailable   float64 `json:"cpuAvailable"`
-	RAMAvailableMB float64 `json:"ramAvailableMB"`
-	CPUTotal       float64 `json:"cpuTotal"`
-	RAMTotalMB     float64 `json:"ramTotalMB"`
-	CanFit         bool    `json:"canFit"`
-	MaxPods        int     `json:"maxPods"`
-	Score          int     `json:"score"`
-	NodeName       string  `json:"nodeName"`
-	Suitable       bool    `json:"suitable"`
-	AvailableCPU   float64 `json:"availableCpu"`
-	AvailableRAM   float64 `json:"availableRam"`
-	Reason         string  `json:"reason,omitempty"`
-
-	EffectiveCPUAvailable *float64 `json:"-"`
-	EffectiveRAMAvailable *float64 `json:"-"`
+	Node               string  `json:"node"`
+	CPUAvailable       float64 `json:"cpuAvailable"`
+	RAMAvailableMB     float64 `json:"ramAvailableMB"`
+	CPUTotal           float64 `json:"cpuTotal"`
+	RAMTotalMB         float64 `json:"ramTotalMB"`
+	CanFit             bool    `json:"canFit"`
+	MaxPods            int     `json:"maxPods"`
+	Score              int     `json:"score"`
+	NodeName           string  `json:"nodeName"`
+	Suitable           bool    `json:"suitable"`
+	AvailableCPU       float64 `json:"availableCpu"`
+	AvailableRAM       float64 `json:"availableRam"`
+	ProjectedCPUFree   float64 `json:"projectedCpuFree"`
+	ProjectedRAMFreeMB float64 `json:"projectedRamFreeMB"`
+	Preferred          bool    `json:"preferred"`
+	Rank               int     `json:"rank"`
+	Reason             string  `json:"reason,omitempty"`
 }
 
 type AddRiskAnalysis struct {
 	DependencyRisk string `json:"dependencyRisk"`
 	Description    string `json:"description"`
+}
+
+type AggregateResources struct {
+	Scope                      string  `json:"scope"`
+	NodeCount                  int     `json:"nodeCount"`
+	TotalCPU                   float64 `json:"totalCpu"`
+	UsedCPU                    float64 `json:"usedCpu"`
+	AvailableCPU               float64 `json:"availableCpu"`
+	TotalRAMMB                 float64 `json:"totalRamMB"`
+	UsedRAMMB                  float64 `json:"usedRamMB"`
+	AvailableRAMMB             float64 `json:"availableRamMB"`
+	SharedHostResourcesEnabled bool    `json:"sharedHostResourcesEnabled"`
+}
+
+type AddDependencyAnalysis struct {
+	Chain           []string                    `json:"chain"`
+	MissingServices []string                    `json:"missingServices"`
+	ServiceChecks   []AddDependencyServiceCheck `json:"serviceChecks"`
+	LinkChecks      []AddDependencyLinkCheck    `json:"linkChecks"`
+	Summary         string                      `json:"summary"`
+}
+
+type AddDependencyServiceCheck struct {
+	ServiceId             string   `json:"serviceId"`
+	Exists                bool     `json:"exists"`
+	AvailabilityPct       *float64 `json:"availabilityPct,omitempty"`
+	PodCount              *int     `json:"podCount,omitempty"`
+	OnlyHighPressureNodes bool     `json:"onlyHighPressureNodes,omitempty"`
+}
+
+type AddDependencyLinkCheck struct {
+	SourceServiceId string   `json:"sourceServiceId"`
+	TargetServiceId string   `json:"targetServiceId"`
+	Observed        bool     `json:"observed"`
+	RPS             *float64 `json:"rps,omitempty"`
+	ErrorRate       *float64 `json:"errorRate,omitempty"`
+	P95             *float64 `json:"p95,omitempty"`
 }
 
 type LegacyRecommendation struct {

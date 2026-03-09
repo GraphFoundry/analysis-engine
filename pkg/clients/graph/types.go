@@ -37,7 +37,7 @@ type NodeResources struct {
 
 type CPUResources struct {
 	UsagePercent float64 `json:"usagePercent"`
-	Cores        int     `json:"cores"`
+	Cores        float64 `json:"cores"`
 }
 
 type RAMResources struct {

@@ -21,22 +21,28 @@ import (
 	"predictive-analysis-engine/pkg/clients/graph"
 	"predictive-analysis-engine/pkg/clients/telemetry"
 	"predictive-analysis-engine/pkg/config"
+	"predictive-analysis-engine/pkg/predictive"
 	"predictive-analysis-engine/pkg/storage"
 )
 
 // WebhookHandler receives graph update webhooks from the service-graph-engine.
 // It replaces the PollWorker by processing pushed data instead of polling.
 type WebhookHandler struct {
-	telemetryClient *telemetry.TelemetryClient
-	decisionStore   *storage.DecisionStore
-	cfg             *config.Config
-	forwardURLs     []string
-	httpClient      *http.Client
-	processingSem   chan struct{}
+	telemetryClient     *telemetry.TelemetryClient
+	decisionStore       *storage.DecisionStore
+	cfg                 *config.Config
+	forwardURLs         []string
+	httpClient          *http.Client
+	processingSem       chan struct{}
+	predictiveEvaluator *predictive.Evaluator
 
 	// Cache the latest snapshot for API consumers
 	mu             sync.RWMutex
 	latestSnapshot *CachedGraphData
+
+	// Cache the latest predictive analysis result
+	predMu           sync.RWMutex
+	latestPredictive *predictive.CurrentActionResponse
 
 	// Basic fixed-window rate limiter state for inbound webhook traffic.
 	rlMu          sync.Mutex
@@ -132,7 +138,7 @@ type WebhookNodePlacement struct {
 type WebhookNodeResources struct {
 	CPU struct {
 		UsagePercent float64 `json:"usagePercent"`
-		Cores        int     `json:"cores"`
+		Cores        float64 `json:"cores"`
 	} `json:"cpu"`
 	RAM struct {
 		UsedMB  float64 `json:"usedMB"`
@@ -173,7 +179,7 @@ type webhookEventMeta struct {
 	SentAt        string
 }
 
-func NewWebhookHandler(cfg *config.Config, tClient *telemetry.TelemetryClient, store *storage.DecisionStore) *WebhookHandler {
+func NewWebhookHandler(cfg *config.Config, tClient *telemetry.TelemetryClient, store *storage.DecisionStore, predEval *predictive.Evaluator) *WebhookHandler {
 	forwardURLs := parseForwardURLs(cfg)
 	maxInFlight := cfg.Webhook.MaxInFlight
 	if maxInFlight <= 0 {
@@ -181,10 +187,11 @@ func NewWebhookHandler(cfg *config.Config, tClient *telemetry.TelemetryClient, s
 	}
 
 	h := &WebhookHandler{
-		telemetryClient: tClient,
-		decisionStore:   store,
-		cfg:             cfg,
-		forwardURLs:     forwardURLs,
+		telemetryClient:     tClient,
+		decisionStore:       store,
+		cfg:                 cfg,
+		forwardURLs:         forwardURLs,
+		predictiveEvaluator: predEval,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -388,7 +395,7 @@ func (h *WebhookHandler) HandleGraphUpdate(w http.ResponseWriter, r *http.Reques
 		if errors.Is(err, storage.ErrWebhookEventHashConflict) {
 			atomic.AddUint64(&h.stats.failed, 1)
 			log.Printf("[Webhook] Event hash conflict eventId=%s correlationId=%s", meta.EventID, meta.CorrelationID)
-			respondError(w, http.StatusBadRequest, "Webhook event ID conflict")
+			respondError(w, http.StatusConflict, "Webhook event ID conflict")
 			return
 		}
 
@@ -451,7 +458,10 @@ func (h *WebhookHandler) processWebhookData(payload WebhookPayload, rawBody []by
 	// 2. Cache latest data for API consumers
 	h.cacheLatestData(data)
 
-	// 3. Forward to dashboard BFF webhook subscribers
+	// 3. Run predictive analysis with the received data
+	h.runPredictiveAnalysis(data)
+
+	// 4. Forward to dashboard BFF webhook subscribers
 	h.forwardToSubscribers(ctx, rawBody, meta)
 
 	if ctx.Err() != nil {
@@ -585,7 +595,7 @@ func deduplicateNodes(services []WebhookServiceInfo) map[string]*infraNode {
 				nodes[n.Node] = &infraNode{
 					Node:     n.Node,
 					CPU:      n.Resources.CPU.UsagePercent,
-					Cores:    float64(n.Resources.CPU.Cores),
+					Cores:    n.Resources.CPU.Cores,
 					RAM:      n.Resources.RAM.UsedMB,
 					RAMTotal: n.Resources.RAM.TotalMB,
 					Pods:     append([]WebhookPodInfo{}, n.Pods...),
@@ -661,6 +671,33 @@ func (h *WebhookHandler) cacheLatestData(data GraphData) {
 		Centrality:      convertCentralityScores(data.Centrality),
 		ReceivedAt:      time.Now(),
 	}
+}
+
+// runPredictiveAnalysis evaluates the predictive recommendation using webhook data.
+func (h *WebhookHandler) runPredictiveAnalysis(data GraphData) {
+	if h.predictiveEvaluator == nil {
+		return
+	}
+
+	snapshot := buildMetricsSnapshotResponse(data.MetricsSnapshot)
+	services := convertServiceInfos(data.Services)
+	nodes := convertNodeInfos(data.Infrastructure.Nodes)
+
+	result := h.predictiveEvaluator.EvaluateFromSamples(snapshot, services, nodes)
+
+	h.predMu.Lock()
+	h.latestPredictive = &result
+	h.predMu.Unlock()
+
+	log.Printf("[Webhook] Predictive analysis complete: anomaly=%v healthScore=%.1f",
+		result.AnomalyActive, result.HealthScore)
+}
+
+// GetLatestPredictive returns the cached predictive analysis result.
+func (h *WebhookHandler) GetLatestPredictive() *predictive.CurrentActionResponse {
+	h.predMu.RLock()
+	defer h.predMu.RUnlock()
+	return h.latestPredictive
 }
 
 // buildMetricsSnapshotResponse converts webhook metrics into graph.MetricsSnapshotResponse.

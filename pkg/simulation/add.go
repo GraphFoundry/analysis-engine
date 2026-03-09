@@ -52,76 +52,16 @@ func SimulateAddService(ctx context.Context, client *graph.Client, cfg *config.C
 		return nil, fmt.Errorf("Failed to fetch cluster state: %w", err)
 	}
 
-	metricsSnapshot, metricsErr := client.GetMetricsSnapshot(ctx)
-	if metricsErr != nil {
-		metricsSnapshot = nil
+	type rawNode struct {
+		Name                  string
+		CPUUsagePercent       float64
+		CPUCores              float64
+		RAMUsedMB             float64
+		RAMTotalMB            float64
+		EffectiveCPUAvailable *float64
+		EffectiveRAMAvailable *float64
 	}
-
-	rawNodes, infraErr := collectRawAddNodes(ctx, client, services)
-	if infraErr != nil {
-		return nil, infraErr
-	}
-
-	rankedNodes := analyzeAddNodes(rawNodes, req)
-	totalCapacityPods := 0
-	for _, node := range rankedNodes {
-		totalCapacityPods += node.MaxPods
-	}
-
-	distribution, remainingReplicas := buildPlacementDistribution(rankedNodes, req.TargetNodeName, req.Replicas)
-	success := remainingReplicas == 0
-
-	selectedNodeFound := false
-	selectedNodeSuitable := false
-	for _, node := range rankedNodes {
-		if node.NodeName == req.TargetNodeName {
-			selectedNodeFound = true
-			selectedNodeSuitable = node.Suitable
-			break
-		}
-	}
-
-	recommendedNodeName := ""
-	topSuitableNodeName := ""
-	for _, node := range rankedNodes {
-		if node.Suitable {
-			topSuitableNodeName = node.NodeName
-			break
-		}
-	}
-	if topSuitableNodeName != "" && topSuitableNodeName != req.TargetNodeName {
-		recommendedNodeName = topSuitableNodeName
-	}
-
-	dependencyAnalysis, riskAnalysis := analyzeDependencyChain(req.ServiceName, req.Dependencies, services, metricsSnapshot)
-	recommendations := buildAddRecommendations(req, distribution, success, selectedNodeFound, selectedNodeSuitable, recommendedNodeName, remainingReplicas, riskAnalysis)
-	explanation := buildAddExplanation(req, success, selectedNodeFound, selectedNodeSuitable, recommendedNodeName, totalCapacityPods)
-
-	return &AddSimulationResult{
-		TargetServiceName:    req.ServiceName,
-		Success:              success,
-		Confidence:           "high",
-		Explanation:          explanation,
-		TotalCapacityPods:    totalCapacityPods,
-		SelectedNodeName:     req.TargetNodeName,
-		SelectedNodeSuitable: selectedNodeSuitable,
-		RecommendedNodeName:  recommendedNodeName,
-		SuitableNodes:        orderNodesForDisplay(rankedNodes, req.TargetNodeName),
-		AggregateResources:   buildAggregateResources(rawNodes, cfg.Simulation.SharedHostResources),
-		DependencyAnalysis:   dependencyAnalysis,
-		RiskAnalysis:         riskAnalysis,
-		Recommendations:      recommendations,
-		Recommendation: &LegacyRecommendation{
-			ServiceName:  req.ServiceName,
-			CPURequest:   req.CPURequest,
-			RAMRequest:   req.RAMRequest,
-			Distribution: distribution,
-		},
-	}, nil
-}
-
-func collectRawAddNodes(ctx context.Context, client *graph.Client, services []graph.ServiceInfo) (map[string]*rawAddNode, error) {
-	rawNodes := make(map[string]*rawAddNode)
+	rawNodes := make(map[string]*rawNode)
 
 	for _, svc := range services {
 		for _, node := range svc.Placement.Nodes {
@@ -163,16 +103,67 @@ func collectRawAddNodes(ctx context.Context, client *graph.Client, services []gr
 		return nil, fmt.Errorf("No nodes found in cluster state. Cannot perform placement analysis.")
 	}
 
-	return rawNodes, nil
-}
+	// --- SHARED HOST RESOURCE DEDUPLICATION ---
+	// When nodes share the same physical host (e.g. minikube docker driver),
+	// standard reporting often reports the full host CPU/RAM for every node,
+	// leading to double-counting. Enable SHARED_HOST_RESOURCES=true to treat
+	// all nodes as a single shared resource pool.
+	if cfg.Simulation.SharedHostResources && len(rawNodes) > 1 {
+		var allNodes []*rawNode
+		for _, n := range rawNodes {
+			allNodes = append(allNodes, n)
+		}
 
-func analyzeAddNodes(rawNodes map[string]*rawAddNode, req AddSimulationRequest) []NodeCapacity {
-	nodeAnalysis := make([]NodeCapacity, 0, len(rawNodes))
+		var sharedCpuTotal float64
+		var sharedRamTotal float64
 
-	for _, node := range rawNodes {
-		cpuUsed := (node.CPUUsagePercent / 100.0) * float64(node.CPUCores)
-		cpuAvail := round2(math.Max(0, float64(node.CPUCores)-cpuUsed))
-		ramAvail := round2(math.Max(0, node.RAMTotalMB-node.RAMUsedMB))
+		for _, n := range allNodes {
+			if n.CPUCores > sharedCpuTotal {
+				sharedCpuTotal = n.CPUCores
+			}
+			if n.RAMTotalMB > sharedRamTotal {
+				sharedRamTotal = n.RAMTotalMB
+			}
+		}
+
+		var sharedCpuUsed float64
+		var sharedRamUsed float64
+		for _, n := range allNodes {
+			sharedCpuUsed += (n.CPUUsagePercent / 100.0) * n.CPUCores
+			sharedRamUsed += n.RAMUsedMB
+		}
+
+		sharedCpuAvailable := math.Max(0, sharedCpuTotal-sharedCpuUsed)
+		sharedRamAvailable := math.Max(0, sharedRamTotal-sharedRamUsed)
+
+		for _, n := range allNodes {
+			nodeCpuAvail := math.Max(0, n.CPUCores-((n.CPUUsagePercent/100.0)*n.CPUCores))
+			nodeRamAvail := math.Max(0, n.RAMTotalMB-n.RAMUsedMB)
+
+			effCpu := math.Min(nodeCpuAvail, sharedCpuAvailable)
+			effRam := math.Min(nodeRamAvail, sharedRamAvailable)
+
+			n.EffectiveCPUAvailable = &effCpu
+			n.EffectiveRAMAvailable = &effRam
+		}
+	}
+
+	var nodeAnalysis []NodeCapacity
+
+	for _, n := range rawNodes {
+		var cpuAvail, ramAvail float64
+
+		if n.EffectiveCPUAvailable != nil {
+			cpuAvail = *n.EffectiveCPUAvailable
+			ramAvail = *n.EffectiveRAMAvailable
+		} else {
+			cpuUsed := (n.CPUUsagePercent / 100.0) * n.CPUCores
+			cpuAvail = math.Max(0, n.CPUCores-cpuUsed)
+			ramAvail = math.Max(0, n.RAMTotalMB-n.RAMUsedMB)
+		}
+
+		cpuAvail = math.Round(cpuAvail*100) / 100
+		ramAvail = math.Round(ramAvail*100) / 100
 
 		cpuFit := math.Floor(cpuAvail / req.CPURequest)
 		ramFit := math.Floor(ramAvail / float64(req.RAMRequest))
@@ -196,7 +187,7 @@ func analyzeAddNodes(rawNodes map[string]*rawAddNode, req AddSimulationRequest) 
 			NodeName:           node.Name,
 			CPUAvailable:       cpuAvail,
 			RAMAvailableMB:     ramAvail,
-			CPUTotal:           float64(node.CPUCores),
+			CPUTotal:       	n.CPUCores,
 			RAMTotalMB:         round2(node.RAMTotalMB),
 			CanFit:             canFit,
 			MaxPods:            maxPods,

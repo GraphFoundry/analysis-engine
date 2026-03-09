@@ -1,18 +1,11 @@
 package api
 
 import (
-	"context"
 	"net/http"
 	"time"
 
-	"predictive-analysis-engine/pkg/logger"
 	"predictive-analysis-engine/pkg/predictive"
 )
-
-// PredictiveActionEvaluator defines the predictive recommendation evaluator contract.
-type PredictiveActionEvaluator interface {
-	Evaluate(ctx context.Context) (predictive.CurrentActionResponse, error)
-}
 
 // PredictiveCurrentActionHandler godoc
 // @Summary Get Current Predictive Recommendation
@@ -23,26 +16,23 @@ type PredictiveActionEvaluator interface {
 // @Failure 503 {object} map[string]string
 // @Router /predictive/actions/current [get]
 func (h *Handler) PredictiveCurrentActionHandler(w http.ResponseWriter, r *http.Request) {
-	if h.PredictiveEvaluator == nil {
-		respondJSON(w, http.StatusOK, predictive.CurrentActionResponse{
-			AnomalyActive:     false,
-			HealthScore:       100,
-			PrimaryBottleneck: nil,
-			TimeToImpactSec:   nil,
-			Recommendation:    nil,
-			Evidence: predictive.Evidence{
-				Timestamp: time.Now().UTC().Format(time.RFC3339),
-			},
-		})
-		return
+	// Return the cached result from the most recent webhook-triggered analysis
+	if h.WebhookHandler != nil {
+		if cached := h.WebhookHandler.GetLatestPredictive(); cached != nil {
+			respondJSON(w, http.StatusOK, cached)
+			return
+		}
 	}
 
-	payload, err := h.PredictiveEvaluator.Evaluate(r.Context())
-	if err != nil {
-		logger.Error("Failed to evaluate predictive action", err)
-		respondError(w, http.StatusServiceUnavailable, "Failed to evaluate predictive action")
-		return
-	}
-
-	respondJSON(w, http.StatusOK, payload)
+	// No webhook data received yet — return healthy default
+	respondJSON(w, http.StatusOK, predictive.CurrentActionResponse{
+		AnomalyActive:     false,
+		HealthScore:       100,
+		PrimaryBottleneck: nil,
+		TimeToImpactSec:   nil,
+		Recommendation:    nil,
+		Evidence: predictive.Evidence{
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		},
+	})
 }

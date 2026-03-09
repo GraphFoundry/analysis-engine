@@ -144,6 +144,10 @@ func (c *TelemetryClient) resolveToken() string {
 // initInfluxClient creates the InfluxDB client with the given token.
 func (c *TelemetryClient) initInfluxClient(token string) {
 	c.cfg.Influx.Token = token
+
+	// Ensure the database exists before creating the write API.
+	c.ensureDatabase(token)
+
 	client := influxdb2.NewClient(c.cfg.Influx.Host, token)
 	writeAPI := client.WriteAPIBlocking("default", c.cfg.Influx.Database)
 
@@ -153,6 +157,43 @@ func (c *TelemetryClient) initInfluxClient(token string) {
 	c.mu.Unlock()
 
 	fmt.Println("[Telemetry] InfluxDB client initialized with token.")
+}
+
+// ensureDatabase creates the InfluxDB 3 database if it doesn't already exist.
+func (c *TelemetryClient) ensureDatabase(token string) {
+	if c.cfg.Influx.Database == "" || c.cfg.Influx.Host == "" {
+		return
+	}
+
+	apiURL := c.cfg.Influx.Host + "/api/v3/configure/database"
+	body := fmt.Sprintf(`{"db":%q}`, c.cfg.Influx.Database)
+
+	req, err := http.NewRequest("POST", apiURL, strings.NewReader(body))
+	if err != nil {
+		fmt.Printf("[Telemetry] Failed to build ensure-database request: %v\n", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		fmt.Printf("[Telemetry] Failed to ensure database '%s': %v\n", c.cfg.Influx.Database, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	switch {
+	case resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated:
+		fmt.Printf("[Telemetry] Database '%s' created successfully.\n", c.cfg.Influx.Database)
+	case resp.StatusCode == http.StatusConflict:
+		fmt.Printf("[Telemetry] Database '%s' already exists.\n", c.cfg.Influx.Database)
+	default:
+		respBody, _ := io.ReadAll(resp.Body)
+		fmt.Printf("[Telemetry] Database ensure returned status %d: %s\n", resp.StatusCode, string(respBody))
+	}
 }
 
 // waitForToken polls the token file until the token is available.
@@ -218,7 +259,7 @@ func (c *TelemetryClient) queryInfluxQL(ctx context.Context, q string) (*influxQ
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 		fmt.Println("[TOKEN] InfluxDB token available")
-	}else {
+	} else {
 		fmt.Printf("[TOKEN] InfluxDB Token Missing\n")
 	}
 

@@ -108,7 +108,7 @@ func Load() (*Config, error) {
 		GraphAPI: GraphAPIConfig{
 			BaseURL:   getGraphBaseURL(),
 			TimeoutMs: getEnvInt("GRAPH_API_TIMEOUT_MS", 15000),
-			Namespace: getEnv("OVERVIEW_NAMESPACE", "onlineboutique"),
+			Namespace: getEnv("OVERVIEW_NAMESPACE", "default"),
 		},
 		RateLimit: RateLimitConfig{
 			WindowMs:    getEnvInt("RATE_LIMIT_WINDOW_MS", 60000),

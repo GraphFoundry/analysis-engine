@@ -9,18 +9,23 @@ import (
 
 // DrillRun represents a saved drill execution sequence.
 type DrillRun struct {
-	ID           string          `json:"id"`
-	Type         string          `json:"type"`
-	Target       string          `json:"target"`
-	Status       string          `json:"status"`
-	StartTime    string          `json:"startTime"`
-	EndTime      *string         `json:"endTime,omitempty"`
-	Config       json.RawMessage `json:"config"`
-	PreSnapshot  json.RawMessage `json:"preSnapshot,omitempty"`
-	PostSnapshot json.RawMessage `json:"postSnapshot,omitempty"`
-	Verdict      string          `json:"verdict"`
-	CreatedAt    string          `json:"createdAt"`
-	Timeline     []DrillStep     `json:"timeline"`
+	ID                         string          `json:"id"`
+	Type                       string          `json:"type"`
+	Target                     string          `json:"target"`
+	Status                     string          `json:"status"`
+	StartTime                  string          `json:"startTime"`
+	EndTime                    *string         `json:"endTime,omitempty"`
+	Config                     json.RawMessage `json:"config"`
+	PreSnapshot                json.RawMessage `json:"preSnapshot,omitempty"`
+	PostSnapshot               json.RawMessage `json:"postSnapshot,omitempty"`
+	Verdict                    string          `json:"verdict"`
+	ScenarioID                 string          `json:"scenarioId,omitempty"`
+	ValidationStatus           string          `json:"validationStatus,omitempty"`
+	RollbackVerifiedAt         *string         `json:"rollbackVerifiedAt,omitempty"`
+	RollbackVerificationSource string          `json:"rollbackVerificationSource,omitempty"`
+	BannerVerified             *bool           `json:"bannerVerified,omitempty"`
+	CreatedAt                  string          `json:"createdAt"`
+	Timeline                   []DrillStep     `json:"timeline"`
 }
 
 // DrillStep is a single log entry or phase transition for a drill.
@@ -39,12 +44,37 @@ func (s *DecisionStore) InsertDrillRun(run DrillRun) error {
 	if run.Config != nil {
 		configStr = string(run.Config)
 	}
+	var bannerVerified interface{}
+	if run.BannerVerified != nil {
+		if *run.BannerVerified {
+			bannerVerified = 1
+		} else {
+			bannerVerified = 0
+		}
+	}
 
 	query := `
-		INSERT INTO drill_runs (id, type, target, status, start_time, config, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO drill_runs (
+			id, type, target, status, start_time, config,
+			scenario_id, validation_status, rollback_verified_at, rollback_verification_source, banner_verified, created_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := s.db.Exec(query, run.ID, run.Type, run.Target, run.Status, run.StartTime, configStr, time.Now().UTC().Format(time.RFC3339))
+	_, err := s.db.Exec(
+		query,
+		run.ID,
+		run.Type,
+		run.Target,
+		run.Status,
+		run.StartTime,
+		configStr,
+		run.ScenarioID,
+		run.ValidationStatus,
+		run.RollbackVerifiedAt,
+		run.RollbackVerificationSource,
+		bannerVerified,
+		time.Now().UTC().Format(time.RFC3339),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to insert drill run: %w", err)
 	}
@@ -58,6 +88,7 @@ func (s *DecisionStore) UpdateDrillRun(run DrillRun) error {
 		configStr = string(run.Config)
 	}
 	var preStr, postStr *string
+	var bannerVerified interface{}
 
 	if run.PreSnapshot != nil {
 		str := string(run.PreSnapshot)
@@ -67,13 +98,35 @@ func (s *DecisionStore) UpdateDrillRun(run DrillRun) error {
 		str := string(run.PostSnapshot)
 		postStr = &str
 	}
+	if run.BannerVerified != nil {
+		if *run.BannerVerified {
+			bannerVerified = 1
+		} else {
+			bannerVerified = 0
+		}
+	}
 
 	query := `
 		UPDATE drill_runs 
-		SET status = ?, end_time = ?, config = ?, pre_snapshot = ?, post_snapshot = ?, verdict = ?
+		SET status = ?, end_time = ?, config = ?, pre_snapshot = ?, post_snapshot = ?, verdict = ?,
+		    scenario_id = ?, validation_status = ?, rollback_verified_at = ?, rollback_verification_source = ?, banner_verified = ?
 		WHERE id = ?
 	`
-	_, err := s.db.Exec(query, run.Status, run.EndTime, configStr, preStr, postStr, run.Verdict, run.ID)
+	_, err := s.db.Exec(
+		query,
+		run.Status,
+		run.EndTime,
+		configStr,
+		preStr,
+		postStr,
+		run.Verdict,
+		run.ScenarioID,
+		run.ValidationStatus,
+		run.RollbackVerifiedAt,
+		run.RollbackVerificationSource,
+		bannerVerified,
+		run.ID,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to update drill run: %w", err)
 	}
@@ -96,7 +149,8 @@ func (s *DecisionStore) AddDrillStep(step DrillStep) error {
 // GetDrillRun retrieves a drill run with its timeline.
 func (s *DecisionStore) GetDrillRun(id string) (*DrillRun, error) {
 	query := `
-		SELECT id, type, target, status, start_time, end_time, config, pre_snapshot, post_snapshot, verdict, created_at 
+		SELECT id, type, target, status, start_time, end_time, config, pre_snapshot, post_snapshot, verdict,
+		       scenario_id, validation_status, rollback_verified_at, rollback_verification_source, banner_verified, created_at
 		FROM drill_runs WHERE id = ?
 	`
 	row := s.db.QueryRow(query, id)
@@ -107,8 +161,30 @@ func (s *DecisionStore) GetDrillRun(id string) (*DrillRun, error) {
 	var endTime sql.NullString
 
 	var verdictStr sql.NullString
+	var scenarioIDStr sql.NullString
+	var validationStatusStr sql.NullString
+	var rollbackVerifiedAtStr sql.NullString
+	var rollbackVerificationSourceStr sql.NullString
+	var bannerVerifiedInt sql.NullInt64
 
-	err := row.Scan(&run.ID, &run.Type, &run.Target, &run.Status, &run.StartTime, &endTime, &configStr, &preStr, &postStr, &verdictStr, &run.CreatedAt)
+	err := row.Scan(
+		&run.ID,
+		&run.Type,
+		&run.Target,
+		&run.Status,
+		&run.StartTime,
+		&endTime,
+		&configStr,
+		&preStr,
+		&postStr,
+		&verdictStr,
+		&scenarioIDStr,
+		&validationStatusStr,
+		&rollbackVerifiedAtStr,
+		&rollbackVerificationSourceStr,
+		&bannerVerifiedInt,
+		&run.CreatedAt,
+	)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -118,6 +194,22 @@ func (s *DecisionStore) GetDrillRun(id string) (*DrillRun, error) {
 
 	if verdictStr.Valid {
 		run.Verdict = verdictStr.String
+	}
+	if scenarioIDStr.Valid {
+		run.ScenarioID = scenarioIDStr.String
+	}
+	if validationStatusStr.Valid {
+		run.ValidationStatus = validationStatusStr.String
+	}
+	if rollbackVerifiedAtStr.Valid {
+		run.RollbackVerifiedAt = &rollbackVerifiedAtStr.String
+	}
+	if rollbackVerificationSourceStr.Valid {
+		run.RollbackVerificationSource = rollbackVerificationSourceStr.String
+	}
+	if bannerVerifiedInt.Valid {
+		value := bannerVerifiedInt.Int64 != 0
+		run.BannerVerified = &value
 	}
 
 	if endTime.Valid {
@@ -159,7 +251,8 @@ func (s *DecisionStore) ListDrillRuns(limit int) ([]DrillRun, error) {
 	}
 
 	query := `
-		SELECT id, type, target, status, start_time, end_time, config, verdict, created_at 
+		SELECT id, type, target, status, start_time, end_time, config, verdict,
+		       scenario_id, validation_status, rollback_verified_at, rollback_verification_source, banner_verified, created_at
 		FROM drill_runs 
 		ORDER BY start_time DESC LIMIT ?
 	`
@@ -175,12 +268,48 @@ func (s *DecisionStore) ListDrillRuns(limit int) ([]DrillRun, error) {
 		var configStr string
 		var verdictStr sql.NullString
 		var endTime sql.NullString
+		var scenarioIDStr sql.NullString
+		var validationStatusStr sql.NullString
+		var rollbackVerifiedAtStr sql.NullString
+		var rollbackVerificationSourceStr sql.NullString
+		var bannerVerifiedInt sql.NullInt64
 
-		if err := rows.Scan(&run.ID, &run.Type, &run.Target, &run.Status, &run.StartTime, &endTime, &configStr, &verdictStr, &run.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&run.ID,
+			&run.Type,
+			&run.Target,
+			&run.Status,
+			&run.StartTime,
+			&endTime,
+			&configStr,
+			&verdictStr,
+			&scenarioIDStr,
+			&validationStatusStr,
+			&rollbackVerifiedAtStr,
+			&rollbackVerificationSourceStr,
+			&bannerVerifiedInt,
+			&run.CreatedAt,
+		); err != nil {
 			return nil, fmt.Errorf("failed to scan drill run list: %w", err)
 		}
 		if verdictStr.Valid {
 			run.Verdict = verdictStr.String
+		}
+		if scenarioIDStr.Valid {
+			run.ScenarioID = scenarioIDStr.String
+		}
+		if validationStatusStr.Valid {
+			run.ValidationStatus = validationStatusStr.String
+		}
+		if rollbackVerifiedAtStr.Valid {
+			run.RollbackVerifiedAt = &rollbackVerifiedAtStr.String
+		}
+		if rollbackVerificationSourceStr.Valid {
+			run.RollbackVerificationSource = rollbackVerificationSourceStr.String
+		}
+		if bannerVerifiedInt.Valid {
+			value := bannerVerifiedInt.Int64 != 0
+			run.BannerVerified = &value
 		}
 		if endTime.Valid {
 			run.EndTime = &endTime.String

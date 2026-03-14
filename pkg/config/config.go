@@ -27,6 +27,7 @@ type SimulationConfig struct {
 	MinLatencyFactor     float64
 	TimeoutMs            int
 	MaxPathsReturned     int
+	SharedHostResources  bool
 }
 
 type ServerConfig struct {
@@ -36,6 +37,7 @@ type ServerConfig struct {
 type GraphAPIConfig struct {
 	BaseURL   string
 	TimeoutMs int
+	Namespace string
 }
 
 type RateLimitConfig struct {
@@ -44,9 +46,10 @@ type RateLimitConfig struct {
 }
 
 type InfluxConfig struct {
-	Host     string
-	Token    string
-	Database string
+	Host      string
+	Token     string
+	TokenFile string
+	Database  string
 }
 
 type SQLiteConfig struct {
@@ -97,6 +100,7 @@ func Load() (*Config, error) {
 			MinLatencyFactor:     getEnvFloat("MIN_LATENCY_FACTOR", 0.6),
 			TimeoutMs:            getEnvInt("TIMEOUT_MS", 8000),
 			MaxPathsReturned:     getEnvInt("MAX_PATHS_RETURNED", 10),
+			SharedHostResources:  getEnv("SHARED_HOST_RESOURCES", "false") == "true",
 		},
 		Server: ServerConfig{
 			Port: getEnvInt("PORT", 5000),
@@ -104,15 +108,17 @@ func Load() (*Config, error) {
 		GraphAPI: GraphAPIConfig{
 			BaseURL:   getGraphBaseURL(),
 			TimeoutMs: getEnvInt("GRAPH_API_TIMEOUT_MS", 15000),
+			Namespace: getEnv("OVERVIEW_NAMESPACE", "default"),
 		},
 		RateLimit: RateLimitConfig{
 			WindowMs:    getEnvInt("RATE_LIMIT_WINDOW_MS", 60000),
 			MaxRequests: getEnvInt("RATE_LIMIT_MAX", 60),
 		},
 		Influx: InfluxConfig{
-			Host:     getEnv("INFLUX_HOST", ""),
-			Token:    getEnv("INFLUX_TOKEN", ""),
-			Database: getEnv("INFLUX_DATABASE", ""),
+			Host:      getEnv("INFLUX_HOST", ""),
+			Token:     getEnv("INFLUX_TOKEN", ""),
+			TokenFile: getEnv("INFLUX_TOKEN_FILE", ""),
+			Database:  getEnv("INFLUX_DATABASE", ""),
 		},
 		SQLite: SQLiteConfig{
 			DBPath: getEnv("SQLITE_DB_PATH", "./data/decisions.db"),

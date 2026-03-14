@@ -16,6 +16,7 @@ import (
 	"predictive-analysis-engine/pkg/config"
 	"predictive-analysis-engine/pkg/logger"
 	"predictive-analysis-engine/pkg/simulation"
+	"predictive-analysis-engine/pkg/storage"
 )
 
 type Handler struct {
@@ -23,14 +24,17 @@ type Handler struct {
 	GraphClient       *graph.Client
 	SimulationService *simulation.Service
 	StartTime         time.Time
+	Store             *storage.DecisionStore
+	WebhookHandler    *WebhookHandler
 }
 
-func NewHandler(cfg *config.Config, graphClient *graph.Client, simService *simulation.Service) *Handler {
+func NewHandler(cfg *config.Config, graphClient *graph.Client, simService *simulation.Service, store *storage.DecisionStore) *Handler {
 	return &Handler{
 		Config:            cfg,
 		GraphClient:       graphClient,
 		SimulationService: simService,
 		StartTime:         time.Now(),
+		Store:             store,
 	}
 }
 
@@ -134,7 +138,7 @@ func (h *Handler) ServicesHandler(w http.ResponseWriter, r *http.Request) {
 
 	if hRes.err == nil {
 		stale = hRes.data.Stale
-		lastUpdated = &hRes.data.LastUpdatedSecondsAgo
+		lastUpdated = hRes.data.LastUpdatedSecondsAgo
 		windowMinutes = hRes.data.WindowMinutes
 	}
 
@@ -160,12 +164,27 @@ func (h *Handler) ServicesHandler(w http.ResponseWriter, r *http.Request) {
 		Placement    graph.ServicePlacement `json:"placement"`
 	}
 
+	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
+	if namespace == "" {
+		namespace = strings.TrimSpace(h.Config.GraphAPI.Namespace)
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
 	var services []ServiceItem
 	for _, s := range sRes.data {
+		ns := s.Namespace
+		if ns == "" {
+			ns = "default"
+		}
+		if ns != namespace {
+			continue
+		}
 		services = append(services, ServiceItem{
-			ServiceId:    fmt.Sprintf("%s:%s", s.Namespace, s.Name),
+			ServiceId:    fmt.Sprintf("%s:%s", ns, s.Name),
 			Name:         s.Name,
-			Namespace:    s.Namespace,
+			Namespace:    ns,
 			PodCount:     s.PodCount,
 			Availability: s.Availability,
 			Placement:    s.Placement,

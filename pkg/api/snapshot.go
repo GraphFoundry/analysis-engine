@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,10 +68,16 @@ type SnapshotMetadata struct {
 // @Router /dependency-graph/snapshot [get]
 func (h *Handler) DependencyGraphHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	namespace := r.URL.Query().Get("namespace")
+	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
+	if namespace == "" {
+		namespace = strings.TrimSpace(h.Config.GraphAPI.Namespace)
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
 
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 
 	var snapshotResult *graph.MetricsSnapshotResponse
 	var snapshotErr error
@@ -80,6 +87,8 @@ func (h *Handler) DependencyGraphHandler(w http.ResponseWriter, r *http.Request)
 
 	var centralityResult *graph.CentralityScoresResponse
 	var centralityErr error
+
+	var servicesResult []graph.ServiceInfo
 
 	go func() {
 		defer wg.Done()
@@ -96,7 +105,21 @@ func (h *Handler) DependencyGraphHandler(w http.ResponseWriter, r *http.Request)
 		centralityResult, centralityErr = h.GraphClient.GetCentralityScores(ctx)
 	}()
 
+	go func() {
+		defer wg.Done()
+		servicesResult, _ = h.GraphClient.GetServices(ctx)
+	}()
+
 	wg.Wait()
+
+	serviceInfoMap := make(map[string]graph.ServiceInfo, len(servicesResult))
+	for _, s := range servicesResult {
+		ns := s.Namespace
+		if ns == "" {
+			ns = "default"
+		}
+		serviceInfoMap[ns+":"+s.Name] = s
+	}
 
 	stale := true
 	var lastUpdatedSecondsAgo *int
@@ -104,8 +127,7 @@ func (h *Handler) DependencyGraphHandler(w http.ResponseWriter, r *http.Request)
 
 	if healthErr == nil && healthResult != nil {
 		stale = healthResult.Stale
-		l := healthResult.LastUpdatedSecondsAgo
-		lastUpdatedSecondsAgo = &l
+		lastUpdatedSecondsAgo = healthResult.LastUpdatedSecondsAgo
 		windowMinutes = healthResult.WindowMinutes
 	}
 
@@ -151,16 +173,18 @@ func (h *Handler) DependencyGraphHandler(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 
-		riskLevel, riskReason := calculateRiskLevel(svc)
+		svcInfoKey := ns + ":" + svc.Name
+		svcInfo := serviceInfoMap[svcInfoKey]
+		podCountVal := svcInfo.PodCount
+		availabilityVal := svcInfo.Availability
+
+		riskLevel, riskReason := calculateRiskLevel(svc, podCountVal, availabilityVal)
 
 		reqRate := svc.RPS
 
 		errPct := svc.ErrorRate * 100.0
 		p95 := svc.P95
-		availPct := svc.Availability.Value * 100.0
-
-		podCountVal := svc.PodCount.Value
-		availabilityVal := svc.Availability.Value
+		availPct := availabilityVal * 100.0
 
 		var pageRank, betweenness *float64
 		if score, ok := centralityMap[svc.Name]; ok {
@@ -249,42 +273,37 @@ func (h *Handler) DependencyGraphHandler(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(resp)
 }
 
-func calculateRiskLevel(m graph.ServiceMetrics) (string, string) {
+func calculateRiskLevel(m graph.ServiceMetrics, podCount int, availability float64) (string, string) {
 
-	isPodCountObject := m.PodCount.IsObject
-	isAvailabilityObject := m.Availability.IsObject
-
-	availPct := m.Availability.Value * 100.0
+	availPct := availability * 100.0
 	errPct := m.ErrorRate * 100.0
 
-	if m.PodCount.Value == 0 && !isPodCountObject {
+	if podCount == 0 {
 		return "CRITICAL", "No pods running"
 	}
 
-	if !isAvailabilityObject {
-		if availPct < 50 {
-			return "CRITICAL", fmt.Sprintf("Critical availability (%.1f%%)", availPct)
-		}
+	if availPct < 50 {
+		return "CRITICAL", fmt.Sprintf("Critical availability (%.1f%%)", availPct)
+	}
 
-		if errPct > 5.0 {
-			return "HIGH", fmt.Sprintf("High error rate (%.2f%%)", errPct)
-		}
-		if availPct < 95.0 {
-			return "HIGH", fmt.Sprintf("Low availability (%.1f%%)", availPct)
-		}
-		if m.P95 > 1000 {
-			return "HIGH", fmt.Sprintf("P95 latency spike (%.0fms)", m.P95)
-		}
+	if errPct > 5.0 {
+		return "HIGH", fmt.Sprintf("High error rate (%.2f%%)", errPct)
+	}
+	if availPct < 95.0 {
+		return "HIGH", fmt.Sprintf("Low availability (%.1f%%)", availPct)
+	}
+	if m.P95 > 1000 {
+		return "HIGH", fmt.Sprintf("P95 latency spike (%.0fms)", m.P95)
+	}
 
-		if errPct > 1.0 {
-			return "MEDIUM", fmt.Sprintf("Elevated error rate (%.2f%%)", errPct)
-		}
-		if availPct < 99.0 {
-			return "MEDIUM", fmt.Sprintf("Availability degraded (%.1f%%)", availPct)
-		}
-		if m.P95 > 500 {
-			return "MEDIUM", fmt.Sprintf("Slow responses (%.0fms)", m.P95)
-		}
+	if errPct > 1.0 {
+		return "MEDIUM", fmt.Sprintf("Elevated error rate (%.2f%%)", errPct)
+	}
+	if availPct < 99.0 {
+		return "MEDIUM", fmt.Sprintf("Availability degraded (%.1f%%)", availPct)
+	}
+	if m.P95 > 500 {
+		return "MEDIUM", fmt.Sprintf("Slow responses (%.0fms)", m.P95)
 	}
 
 	if m.RPS == 0 && m.ErrorRate == 0 && m.P95 == 0 {

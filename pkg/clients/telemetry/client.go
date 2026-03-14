@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"predictive-analysis-engine/pkg/config"
 	"strings"
+	"sync"
 	"time"
 
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
@@ -17,6 +19,7 @@ import (
 )
 
 type TelemetryClient struct {
+	mu         sync.RWMutex
 	client     influxdb2.Client
 	httpClient *http.Client
 	writeAPI   api.WriteAPIBlocking
@@ -100,27 +103,129 @@ type influxQLResponse struct {
 }
 
 func NewClient(cfg *config.Config) *TelemetryClient {
-	if cfg.Influx.Host == "" || cfg.Influx.Token == "" {
-		return &TelemetryClient{cfg: cfg}
+	tc := &TelemetryClient{
+		httpClient: &http.Client{Timeout: 10 * time.Second},
+		cfg:        cfg,
 	}
 
-	client := influxdb2.NewClient(cfg.Influx.Host, cfg.Influx.Token)
+	if cfg.Influx.Host == "" {
+		return tc
+	}
 
-	org := "default"
+	// Try to resolve token immediately (env var or file)
+	token := tc.resolveToken()
+	if token != "" {
+		tc.initInfluxClient(token)
+	} else {
+		// Token not available yet — start background poller
+		go tc.waitForToken()
+	}
 
-	writeAPI := client.WriteAPIBlocking(org, cfg.Influx.Database)
+	return tc
+}
 
-	return &TelemetryClient{
-		client:     client,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		writeAPI:   writeAPI,
-		cfg:        cfg,
+// resolveToken reads the token from env var first, then falls back to the token file.
+func (c *TelemetryClient) resolveToken() string {
+	if c.cfg.Influx.Token != "" {
+		return c.cfg.Influx.Token
+	}
+	if c.cfg.Influx.TokenFile != "" {
+		data, err := os.ReadFile(c.cfg.Influx.TokenFile)
+		if err == nil {
+			token := strings.TrimSpace(string(data))
+			if token != "" {
+				return token
+			}
+		}
+	}
+	return ""
+}
+
+// initInfluxClient creates the InfluxDB client with the given token.
+func (c *TelemetryClient) initInfluxClient(token string) {
+	c.cfg.Influx.Token = token
+
+	// Ensure the database exists before creating the write API.
+	c.ensureDatabase(token)
+
+	client := influxdb2.NewClient(c.cfg.Influx.Host, token)
+	writeAPI := client.WriteAPIBlocking("default", c.cfg.Influx.Database)
+
+	c.mu.Lock()
+	c.client = client
+	c.writeAPI = writeAPI
+	c.mu.Unlock()
+
+	fmt.Println("[Telemetry] InfluxDB client initialized with token.")
+}
+
+// ensureDatabase creates the InfluxDB 3 database if it doesn't already exist.
+func (c *TelemetryClient) ensureDatabase(token string) {
+	if c.cfg.Influx.Database == "" || c.cfg.Influx.Host == "" {
+		return
+	}
+
+	apiURL := c.cfg.Influx.Host + "/api/v3/configure/database"
+	body := fmt.Sprintf(`{"db":%q}`, c.cfg.Influx.Database)
+
+	req, err := http.NewRequest("POST", apiURL, strings.NewReader(body))
+	if err != nil {
+		fmt.Printf("[Telemetry] Failed to build ensure-database request: %v\n", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		fmt.Printf("[Telemetry] Failed to ensure database '%s': %v\n", c.cfg.Influx.Database, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	switch {
+	case resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated:
+		fmt.Printf("[Telemetry] Database '%s' created successfully.\n", c.cfg.Influx.Database)
+	case resp.StatusCode == http.StatusConflict:
+		fmt.Printf("[Telemetry] Database '%s' already exists.\n", c.cfg.Influx.Database)
+	default:
+		respBody, _ := io.ReadAll(resp.Body)
+		fmt.Printf("[Telemetry] Database ensure returned status %d: %s\n", resp.StatusCode, string(respBody))
 	}
 }
 
+// waitForToken polls the token file until the token is available.
+func (c *TelemetryClient) waitForToken() {
+	fmt.Printf("[Telemetry] Waiting for InfluxDB token...\n")
+	for {
+		token := c.resolveToken()
+		if token != "" {
+			c.initInfluxClient(token)
+			return
+		}
+		time.Sleep(5 * time.Second)
+	}
+}
+
+// getClient returns the current InfluxDB client (thread-safe).
+func (c *TelemetryClient) getClient() influxdb2.Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.client
+}
+
+// getWriteAPI returns the current write API (thread-safe).
+func (c *TelemetryClient) getWriteAPI() api.WriteAPIBlocking {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.writeAPI
+}
+
 func (c *TelemetryClient) Close() {
-	if c.client != nil {
-		c.client.Close()
+	if cl := c.getClient(); cl != nil {
+		cl.Close()
 	}
 }
 
@@ -128,8 +233,8 @@ func (c *TelemetryClient) CheckStatus() (bool, string) {
 	if !c.cfg.Telemetry.Enabled {
 		return false, "Telemetry endpoints disabled. Set TELEMETRY_ENABLED=true to enable."
 	}
-	if c.client == nil {
-		return false, "InfluxDB not configured. Set INFLUX_HOST, INFLUX_TOKEN, INFLUX_DATABASE"
+	if c.getClient() == nil {
+		return false, "InfluxDB not configured or token not yet available. Set INFLUX_HOST, INFLUX_DATABASE, and ensure INFLUX_TOKEN or INFLUX_TOKEN_FILE is provided."
 	}
 	return true, ""
 }
@@ -150,7 +255,14 @@ func (c *TelemetryClient) queryInfluxQL(ctx context.Context, q string) (*influxQ
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Token "+c.cfg.Influx.Token)
+	token := c.resolveToken()
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+		fmt.Println("[TOKEN] InfluxDB token available")
+	} else {
+		fmt.Printf("[TOKEN] InfluxDB Token Missing\n")
+	}
+
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.httpClient.Do(req)
@@ -402,7 +514,8 @@ func (c *TelemetryClient) GetEdgeMetrics(ctx context.Context, fromSvc, toSvc, fr
 }
 
 func (c *TelemetryClient) WriteServiceMetrics(ctx context.Context, points []ServicePoint) error {
-	if c.writeAPI == nil {
+	wAPI := c.getWriteAPI()
+	if wAPI == nil {
 		return nil
 	}
 	var influxPoints []*write.Point
@@ -446,13 +559,14 @@ func (c *TelemetryClient) WriteServiceMetrics(ctx context.Context, points []Serv
 	}
 
 	if len(influxPoints) > 0 {
-		return c.writeAPI.WritePoint(ctx, influxPoints...)
+		return wAPI.WritePoint(ctx, influxPoints...)
 	}
 	return nil
 }
 
 func (c *TelemetryClient) WriteEdgeMetrics(ctx context.Context, points []EdgePoint) error {
-	if c.writeAPI == nil {
+	wAPI := c.getWriteAPI()
+	if wAPI == nil {
 		return nil
 	}
 	var influxPoints []*write.Point
@@ -494,13 +608,14 @@ func (c *TelemetryClient) WriteEdgeMetrics(ctx context.Context, points []EdgePoi
 	}
 
 	if len(influxPoints) > 0 {
-		return c.writeAPI.WritePoint(ctx, influxPoints...)
+		return wAPI.WritePoint(ctx, influxPoints...)
 	}
 	return nil
 }
 
 func (c *TelemetryClient) WriteInfrastructureMetrics(ctx context.Context, nodes []PkgNodePoint, pods []PkgPodPoint) error {
-	if c.writeAPI == nil {
+	wAPI := c.getWriteAPI()
+	if wAPI == nil {
 		return nil
 	}
 	var influxPoints []*write.Point
@@ -566,7 +681,7 @@ func (c *TelemetryClient) WriteInfrastructureMetrics(ctx context.Context, nodes 
 	}
 
 	if len(influxPoints) > 0 {
-		return c.writeAPI.WritePoint(ctx, influxPoints...)
+		return wAPI.WritePoint(ctx, influxPoints...)
 	}
 	return nil
 }

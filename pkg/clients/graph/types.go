@@ -7,7 +7,7 @@ import (
 
 type HealthResponse struct {
 	Status                string `json:"status"`
-	LastUpdatedSecondsAgo int    `json:"lastUpdatedSecondsAgo"`
+	LastUpdatedSecondsAgo *int   `json:"lastUpdatedSecondsAgo"`
 	WindowMinutes         int    `json:"windowMinutes"`
 	Stale                 bool   `json:"stale"`
 }
@@ -37,7 +37,7 @@ type NodeResources struct {
 
 type CPUResources struct {
 	UsagePercent float64 `json:"usagePercent"`
-	Cores        int     `json:"cores"`
+	Cores        float64 `json:"cores"`
 }
 
 type RAMResources struct {

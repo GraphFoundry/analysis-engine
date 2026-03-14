@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -19,9 +20,9 @@ import (
 	"predictive-analysis-engine/pkg/clients/telemetry"
 	"predictive-analysis-engine/pkg/config"
 	"predictive-analysis-engine/pkg/drills"
+	"predictive-analysis-engine/pkg/predictive"
 	"predictive-analysis-engine/pkg/simulation"
 	"predictive-analysis-engine/pkg/storage"
-	"predictive-analysis-engine/pkg/worker"
 )
 
 // @title Predictive Analysis Engine API
@@ -49,6 +50,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+	config.Init(cfg)
 
 	log.Printf("Predictive Analysis Engine started on port %d", cfg.Server.Port)
 	log.Printf("Graph Engine URL: %s", cfg.GraphAPI.BaseURL)
@@ -65,7 +67,7 @@ func main() {
 
 	simService := simulation.NewService(cfg, graphClient, store)
 
-	apiHandler := api.NewHandler(cfg, graphClient, simService)
+	apiHandler := api.NewHandler(cfg, graphClient, simService, store)
 	decisionsHandler := &api.DecisionsHandler{Store: store}
 	telemetryHandler := &api.TelemetryHandler{Client: telemetryClient, Cfg: cfg}
 
@@ -82,7 +84,7 @@ func main() {
 			UsersEnvName:   cfg.Drills.TargetedLoadUsersEnv,
 		},
 	})
-	drillsHandler := &api.DrillsHandler{Engine: drillEngine, Store: store}
+	drillsHandler := &api.DrillsHandler{Engine: drillEngine, Store: store, GraphClient: graphClient}
 
 	r := chi.NewRouter()
 
@@ -106,27 +108,41 @@ func main() {
 	r.Post("/simulate/add", apiHandler.SimulateAddHandler)
 	r.Get("/simulate/context", apiHandler.SimulateContextHandler)
 	r.Get("/simulations/capabilities", apiHandler.SimulationCapabilitiesHandler)
+	r.Post("/simulations/run", apiHandler.SimulationsRunHandler)
 	r.Get("/demo/snapshots", apiHandler.DemoSnapshotsHandler)
 	r.Get("/dependency-graph/snapshot", apiHandler.DependencyGraphHandler)
+	r.Get("/predictive/actions/current", apiHandler.PredictiveCurrentActionHandler)
 
 	decisionsHandler.RegisterRoutes(r)
 	drillsHandler.RegisterRoutes(r)
 	r.Mount("/telemetry", telemetryHandler.Routes())
 
 	// Webhook endpoint: receives graph updates from service-graph-engine
-	webhookHandler := api.NewWebhookHandler(cfg, telemetryClient, store)
+	// and triggers predictive analysis on each update
+	predEvaluator := predictive.NewEvaluator(graphClient)
+	webhookHandler := api.NewWebhookHandler(cfg, telemetryClient, store, predEvaluator)
 	r.Post("/webhook/graph-update", webhookHandler.HandleGraphUpdate)
 	r.Get("/webhook/status", webhookHandler.HandleWebhookStatus)
+	apiHandler.WebhookHandler = webhookHandler
 
-	// Only start PollWorker if webhook mode is disabled (fallback)
-	var pollWorker *worker.PollWorker
-	if !cfg.Webhook.Enabled {
-		log.Println("Webhook mode disabled - starting PollWorker for backward compatibility")
-		pollWorker = worker.NewPollWorker(cfg, graphClient, telemetryClient)
-		pollWorker.Start()
-	} else {
-		log.Println("Webhook mode enabled - PollWorker disabled (data pushed via POST /webhook/graph-update)")
-	}
+	// Runtime config reload endpoint
+	r.Post("/admin/reload-config", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Env map[string]string `json:"env"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if err := config.ReloadWithOverrides("/etc/runtime-config/runtime.env", body.Env); err != nil {
+			log.Printf("[CONFIG] Reload failed: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(fmt.Sprintf(`{"status":"error","message":"%s"}`, err.Error())))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"reloaded"}`))
+	})
+
+	log.Println("Webhook mode active - analysis triggered via POST /webhook/graph-update")
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	srv := &http.Server{
@@ -151,10 +167,6 @@ func main() {
 
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("Server forced to shutdown: %v", err)
-	}
-
-	if pollWorker != nil {
-		pollWorker.Stop()
 	}
 
 	telemetryClient.Close()
